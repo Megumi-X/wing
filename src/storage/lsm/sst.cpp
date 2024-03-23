@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <fstream>
+#include <algorithm>
 
 #include "common/bloomfilter.hpp"
 
@@ -31,6 +32,9 @@ SSTable::SSTable(SSTInfo sst_info, size_t block_size, bool use_direct_io)
     index_value.block_ = fr.ReadValue<BlockHandle>();
     index_.push_back(index_value); 
   }
+  std::sort(index_.begin(), index_.end(), [](const IndexValue& a, const IndexValue& b) {
+    return ParsedKey(a.key_) < ParsedKey(b.key_);
+  });
   size_t bloom_len = fr.ReadValue<size_t>();
   
   bloom_filter_ = fr.ReadString(bloom_len);
@@ -54,17 +58,24 @@ GetResult SSTable::Get(Slice key, uint64_t seq, std::string* value) {
     // std::cout << "Negative with key: " << key << "\n";
     return GetResult::kNotFound;
   }
-  SSTableIterator iter = Begin();
-  for (size_t ii = 0; ii < sst_info_.count_; ii++) {
-    if (ParsedKey(iter.key()).user_key_ == key && ParsedKey(iter.key()).seq_ <= seq) {
-      if (iter.Valid()) {
-        *value = iter.value();
+  const auto block_index = std::lower_bound(index_.begin(), index_.end(), key, [&](const IndexValue& index_value, const Slice& key) {
+    return ParsedKey(index_value.key_) < ParsedKey(key, seq, RecordType::Value);
+  });
+  if (block_index == index_.end()) return GetResult::kNotFound;
+  FileReader fr(file_.get(), 2 * block_size_, block_index->block_.offset_);
+  AlignedBuffer buf(block_size_, 4096);
+  fr.Read(buf.data(), block_index->block_.size_);
+  BlockIterator block_it(buf.data(), block_index->block_);
+  for (size_t i = 0; i < block_index->block_.count_; i++) {
+    if (ParsedKey(block_it.key()).user_key_ == key && ParsedKey(block_it.key()).seq_ <= seq) {
+      if (block_it.Valid()) {
+        *value = block_it.value();
         return GetResult::kFound;
       } else {
         return GetResult::kDelete;
-      } 
+      }
     }
-    iter.Next();
+    block_it.Next();
   }
   // std::cout << "False Positive with key: " << key << "\n";
   return GetResult::kNotFound;

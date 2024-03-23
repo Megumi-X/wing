@@ -184,8 +184,7 @@ TEST(LSMTest, SSTableTest) {
     std::string value;
     ASSERT_EQ(sst.Get(kv[i].key(), 1, &value), GetResult::kFound);
     ASSERT_EQ(value, kv[i].value());
-    ASSERT_EQ(sst.Get(kv[i].key(), 0, &value), GetResult::kNotFound);
-    if (i % 100 == 0) std::cout << i << "\n";
+    ASSERT_EQ(sst.Get(kv[i].key(), 0, &value), GetResult::kNotFound); 
   }
   /* Test bloom filter */
   wing::wing_testing::TestTimeout(
