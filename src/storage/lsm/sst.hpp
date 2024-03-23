@@ -106,11 +106,13 @@ class SSTableIterator final : public Iterator {
 
   void Next() override;
 
- private:
+  void BlockNext() { block_it_.Next(); }
+
   /* The reference to the SSTable */
   SSTable* sst_{nullptr};
   /* Current data block id */
   size_t block_id_{0};
+  offset_t record_id_{0};
   /* The block iterator of the current data block. */
   BlockIterator block_it_;
   /* The buffer */
@@ -164,6 +166,8 @@ class SSTableBuilder {
   size_t bloom_filter_offset_{0};
   /* The number of bits per key in bloom filter */
   size_t bloom_bits_per_key_{0};
+
+  void transfor_data_from_block_builder();
 };
 
 }  // namespace lsm

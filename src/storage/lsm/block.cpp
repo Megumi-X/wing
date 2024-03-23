@@ -14,12 +14,16 @@ bool BlockBuilder::Append(ParsedKey key, Slice value) {
   offsets_.push_back(offset_);
   offset_ += append_size - sizeof(offset_t);
   file_->AppendValue<offset_t>(key_length);
-  file_->AppendString(key.user_key_);
-  file_->AppendValue<seq_t>(key.seq_);
-  file_->AppendValue<RecordType>(key.type_);
+  file_->AppendString(InternalKey(key).GetSlice());
   file_->AppendValue<offset_t>(value_length);
   file_->AppendString(value);
   current_size_ += append_size;
+  if (largest_key < key || offsets_.size() == 1){
+    largest_key = key;
+  } else if (smallest_key > key || offsets_.size() == 1){
+    smallest_key = key;
+  }
+  file_->Flush();
   return true;
 }
 
@@ -27,6 +31,7 @@ void BlockBuilder::Finish() {
   for (auto offset : offsets_) {
     file_->AppendValue<offset_t>(offset);
   }
+  file_->Flush();
 }
 
 void BlockIterator::Seek(Slice user_key, seq_t seq) {
@@ -64,7 +69,7 @@ void BlockIterator::Next() {
 bool BlockIterator::Valid() {
   offset_t key_length = *reinterpret_cast<const offset_t*>(current_);
   Slice key = Slice(current_ + sizeof(offset_t), key_length);
-  return ParsedKey(key).type_ != RecordType::Deletion;
+  return (ParsedKey(key).type_ == RecordType::Value);
 }
 
 }  // namespace lsm
