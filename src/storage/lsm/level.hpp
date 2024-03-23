@@ -116,6 +116,7 @@ class SortedRunIterator final : public Iterator {
   SSTableIterator sst_it_;
   /* The index of the current SSTable */
   size_t sst_id_{0};
+  size_t record_id_{0};
 };
 
 class Level {

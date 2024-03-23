@@ -54,7 +54,6 @@ GetResult SSTable::Get(Slice key, uint64_t seq, std::string* value) {
     // std::cout << "Negative with key: " << key << "\n";
     return GetResult::kNotFound;
   }
-  return GetResult::kNotFound;
   SSTableIterator iter = Begin();
   for (size_t ii = 0; ii < sst_info_.count_; ii++) {
     if (ParsedKey(iter.key()).user_key_ == key && ParsedKey(iter.key()).seq_ <= seq) {

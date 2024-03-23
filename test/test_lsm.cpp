@@ -180,12 +180,13 @@ TEST(LSMTest, SSTableTest) {
   info.sst_id_ = 0;
   SSTable sst(info, 4096, false);
   /* Test SSTable::Get */
-  // for (uint32_t i = 0; i < N; i++) {
-  //   std::string value;
-  //   ASSERT_EQ(sst.Get(kv[i].key(), 1, &value), GetResult::kFound);
-  //   ASSERT_EQ(value, kv[i].value());
-  //   ASSERT_EQ(sst.Get(kv[i].key(), 0, &value), GetResult::kNotFound);
-  // }
+  for (uint32_t i = 0; i < N; i++) {
+    std::string value;
+    ASSERT_EQ(sst.Get(kv[i].key(), 1, &value), GetResult::kFound);
+    ASSERT_EQ(value, kv[i].value());
+    ASSERT_EQ(sst.Get(kv[i].key(), 0, &value), GetResult::kNotFound);
+    if (i % 100 == 0) std::cout << i << "\n";
+  }
   /* Test bloom filter */
   wing::wing_testing::TestTimeout(
       [&]() {
