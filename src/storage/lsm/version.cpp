@@ -1,11 +1,12 @@
 #include "storage/lsm/version.hpp"
+#include <iostream>
 
 namespace wing {
 
 namespace lsm {
 
 bool Version::Get(std::string_view user_key, seq_t seq, std::string* value) {
-  for (const auto& lev : levels_) {
+  for (auto& lev : levels_) {
     GetResult res = lev.Get(user_key, seq, value);
     if (res == GetResult::kFound) {
       return true;
@@ -53,19 +54,43 @@ std::string SuperVersion::ToString() const {
   return ret;
 }
 
-void SuperVersionIterator::SeekToFirst() { DB_ERR("Not implemented!"); }
-
-void SuperVersionIterator::Seek(Slice key, seq_t seq) {
-  DB_ERR("Not implemented!");
+void SuperVersionIterator::SeekToFirst() {
+  it_.Clear();
+  mt_its_.clear();
+  auto mt = sv_->GetMt();
+  auto mt_it = mt->Begin();
+  if (mt_it.Valid()) mt_its_.push_back(std::move(mt_it));
+  for (auto& imm: *sv_->GetImms()) {
+    auto imm_it = imm->Begin();
+    if (imm_it.Valid()) mt_its_.push_back(std::move(imm_it));
+  }
+  sst_its_.clear();
+  for (auto& level: sv_->GetVersion()->GetLevels()) {
+    for (auto& run: level.GetRuns()) {
+      auto sst_it = run->Begin();
+      if (sst_it.Valid()) sst_its_.push_back(std::move(sst_it));
+    }
+  }
+  for (auto& it: mt_its_) it_.Push(&it);
+  for (auto& it: sst_its_) it_.Push(&it);
 }
 
-bool SuperVersionIterator::Valid() { DB_ERR("Not implemented!"); }
+void SuperVersionIterator::Seek(Slice key, seq_t seq) {
+  SeekToFirst();
+  while (it_.Valid()){
+    if (ParsedKey(it_.key()) >= ParsedKey(key, seq, RecordType::Value))
+      return;
+    it_.Next();
+  }
+}
 
-Slice SuperVersionIterator::key() { DB_ERR("Not implemented!"); }
+bool SuperVersionIterator::Valid() { return it_.Valid(); }
 
-Slice SuperVersionIterator::value() { DB_ERR("Not implemented!"); }
+Slice SuperVersionIterator::key() { return it_.key(); }
 
-void SuperVersionIterator::Next() { DB_ERR("Not implemented!"); }
+Slice SuperVersionIterator::value() { return it_.value(); }
+
+void SuperVersionIterator::Next() { it_.Next(); }
 
 }  // namespace lsm
 

@@ -47,6 +47,12 @@ class IteratorHeap final : public Iterator {
     }
   }
 
+  void Clear() {
+    while (!heap_.empty()) {
+        heap_.pop();
+    }
+  }
+
  private:
     struct Compare {
         bool operator()(T* lhs, T* rhs) const {
