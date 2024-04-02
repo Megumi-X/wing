@@ -49,12 +49,12 @@ void BlockIterator::Seek(Slice user_key, seq_t seq) {
 
 void BlockIterator::SeekToFirst() { current_ = const_cast<char*>(data_); }
 
-Slice BlockIterator::key() {
+Slice BlockIterator::key() const {
   offset_t key_length = *reinterpret_cast<const offset_t*>(current_);
   return Slice(current_ + sizeof(offset_t), key_length);
 }
 
-Slice BlockIterator::value() {
+Slice BlockIterator::value() const {
   offset_t key_length = *reinterpret_cast<const offset_t*>(current_);
   offset_t value_length = *reinterpret_cast<const offset_t*>(current_ + sizeof(offset_t) + key_length);
   return Slice(current_ + sizeof(offset_t) + key_length + sizeof(offset_t), value_length);

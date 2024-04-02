@@ -38,17 +38,19 @@ class DBImpl {
   // Return true if kFound, false if not
   bool Get(Slice key, std::string *value);
   void Save();
-  void FlushAllAndWait();
+  void FlushAll();
+  void WaitForFlushAndCompaction();
 
   DBIterator Begin();
   DBIterator Seek(Slice key);
+  std::shared_ptr<SuperVersion> GetSV();
+  const Options &GetOptions() const { return options_; }
 
  private:
   void SwitchMemtable(bool force = false);
   void FlushThread();
   void CompactionThread();
   std::vector<std::shared_ptr<MemTable>> PickMemTables();
-  std::shared_ptr<SuperVersion> GetSV();
   void InstallSV(std::shared_ptr<SuperVersion> sv);
   void SaveMetadata();
   void LoadMetadata();
@@ -64,6 +66,8 @@ class DBImpl {
   std::condition_variable flush_cv_;
   std::condition_variable compact_cv_;
   bool stop_signal_{false};
+  bool compact_flag_{false};
+  bool flush_flag_{false};
 
   std::mutex write_mutex_;
   std::mutex db_mutex_;
@@ -84,9 +88,9 @@ class DBIterator final : public Iterator {
 
   bool Valid() override;
 
-  Slice key() override;
+  Slice key() const override;
 
-  Slice value() override;
+  Slice value() const override;
 
   void Next() override;
 

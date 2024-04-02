@@ -100,9 +100,9 @@ class SSTableIterator final : public Iterator {
 
   bool Valid() override;
 
-  Slice key() override;
+  Slice key() const override;
 
-  Slice value() override;
+  Slice value() const override;
 
   void Next() override;
 
@@ -144,6 +144,8 @@ class SSTableBuilder {
   size_t count() const { return count_; }
 
   size_t GetIndexOffset() const { return index_offset_; }
+
+  size_t GetBloomFilterOffset() const { return bloom_filter_offset_; }
 
  private:
   /* The file writer */

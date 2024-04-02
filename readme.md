@@ -65,7 +65,16 @@ Wing requires C++20. You may need to upgrade your compiler.
 
 Windows: [Mingw-w64](https://winlibs.com/)
 
-Linux: Upgrade the version of GCC to 10 or newer. You may also use Clang.
+Linux: Upgrade the version of GCC to 10 or newer. You can use `g++ --version` to check the version. You may also use Clang.
+
+If you use the default arguments on Linux, you can just do:
+
+```shell
+mkdir build
+cd build
+cmake ..
+make -j
+```
 
 Compile with G++:
 
@@ -143,7 +152,11 @@ You can use `pre-commit run -a` to apply the formatting scripts.
 
 ## Documentation
 
-The documentation can be found at https://iidb.github.io/wing-docs .
+The documentation can be found at <https://iidb.github.io/wing-docs>.
+
+## Submit
+
+`make submit` in the build directory to create `submission.zip` and submit it to autolab.
 
 ## LICENSE
 

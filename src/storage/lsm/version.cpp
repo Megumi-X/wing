@@ -86,9 +86,9 @@ void SuperVersionIterator::Seek(Slice key, seq_t seq) {
 
 bool SuperVersionIterator::Valid() { return it_.Valid(); }
 
-Slice SuperVersionIterator::key() { return it_.key(); }
+Slice SuperVersionIterator::key() const { return it_.key(); }
 
-Slice SuperVersionIterator::value() { return it_.value(); }
+Slice SuperVersionIterator::value() const { return it_.value(); }
 
 void SuperVersionIterator::Next() { it_.Next(); }
 

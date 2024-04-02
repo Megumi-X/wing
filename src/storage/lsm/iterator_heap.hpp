@@ -28,12 +28,12 @@ class IteratorHeap final : public Iterator {
     return ret;
  }
 
-  Slice key() override {
+  Slice key() const override {
     Slice ret = heap_.top()->key(); 
     return ret;
   }
 
-  Slice value() override {
+  Slice value() const override {
     Slice ret = heap_.top()->value(); 
     return ret;
   }

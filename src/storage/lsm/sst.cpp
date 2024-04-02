@@ -112,9 +112,9 @@ void SSTableIterator::SeekToFirst() {
 
 bool SSTableIterator::Valid() { return block_it_.Valid(); }
 
-Slice SSTableIterator::key() { return block_it_.key(); }
+Slice SSTableIterator::key() const { return block_it_.key(); }
 
-Slice SSTableIterator::value() { return block_it_.value(); }
+Slice SSTableIterator::value() const { return block_it_.value(); }
 
 void SSTableIterator::Next() {
   block_it_.Next();

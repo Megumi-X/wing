@@ -47,9 +47,9 @@ void SortedRunIterator::SeekToFirst() {
 
 bool SortedRunIterator::Valid() { return sst_it_.Valid(); }
 
-Slice SortedRunIterator::key() { return sst_it_.key(); }
+Slice SortedRunIterator::key() const { return sst_it_.key(); }
 
-Slice SortedRunIterator::value() { return sst_it_.value(); }
+Slice SortedRunIterator::value() const { return sst_it_.value(); }
 
 void SortedRunIterator::Next() {
   sst_it_.Next();
