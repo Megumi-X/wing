@@ -5,24 +5,28 @@ namespace wing {
 namespace lsm {
 
 GetResult SortedRun::Get(Slice key, uint64_t seq, std::string* value) {
-  for (const auto& sst : ssts_) {
-    auto res = sst->Get(key, seq, value);
-    if (res != GetResult::kNotFound) {
-      return res;
-    }
+  const auto sst_index = std::lower_bound(ssts_.begin(), ssts_.end(), key, [&](const std::shared_ptr<SSTable>& sst1, const Slice& key) {
+    return sst1->GetLargestKey() < ParsedKey(key, seq, RecordType::Value);
+  });
+  if (sst_index == ssts_.end()) {
+    return GetResult::kNotFound;
+  }
+  auto res = sst_index->get()->Get(key, seq, value);
+  if (res != GetResult::kNotFound) {
+    return res;
   }
   return GetResult::kNotFound;
 }
 
 SortedRunIterator SortedRun::Seek(Slice key, uint64_t seq) {
-  SortedRunIterator iter = Begin();
-  while (iter.Valid()) {
-    if (ParsedKey(iter.key()) >= ParsedKey(key, seq, RecordType::Value)) {
-      return iter;
-    }
-    iter.Next();
+  const auto sst_index = std::lower_bound(ssts_.begin(), ssts_.end(), key, [&](const std::shared_ptr<SSTable>& sst1, const Slice& key) {
+    return sst1->GetLargestKey() < ParsedKey(key, seq, RecordType::Value);
+  });
+  if (sst_index == ssts_.end()) {
+    return Begin();
   }
-  return iter;
+  auto iter = sst_index->get()->Seek(key, seq);
+  return SortedRunIterator(this, std::move(iter), sst_index - ssts_.begin());
 }
 
 SortedRunIterator SortedRun::Begin() {
@@ -42,7 +46,18 @@ SortedRun::~SortedRun() {
 void SortedRunIterator::SeekToFirst() {
   sst_it_ = run_->GetSSTs()[0]->Begin();
   sst_id_ = 0;
-  record_id_ = 0;
+}
+
+void SortedRunIterator::Seek(Slice key, uint64_t seq) {
+  const auto sst_index = std::lower_bound(run_->GetSSTs().begin(), run_->GetSSTs().end(), key, [&](const std::shared_ptr<SSTable>& sst1, const Slice& key) {
+    return sst1->GetLargestKey() < ParsedKey(key, seq, RecordType::Value);
+  });
+  if (sst_index == run_->GetSSTs().end()) {
+    SeekToFirst();
+    return;
+  }
+  sst_id_ = sst_index - run_->GetSSTs().begin();
+  sst_it_ = run_->GetSSTs()[sst_id_]->Seek(key, seq);
 }
 
 bool SortedRunIterator::Valid() { return sst_it_.Valid(); }
@@ -53,11 +68,9 @@ Slice SortedRunIterator::value() const { return sst_it_.value(); }
 
 void SortedRunIterator::Next() {
   sst_it_.Next();
-  record_id_++;
-  if (record_id_ < run_->GetSSTs()[sst_id_]->GetSSTInfo().count_) return;
+  if (sst_it_.Valid()) return;
   if (sst_id_ >= run_->GetSSTs().size() - 1) return;
   sst_id_++;
-  record_id_ = 0;
   sst_it_ = run_->GetSSTs()[sst_id_]->Begin();
 }
 

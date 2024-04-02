@@ -72,7 +72,23 @@ class SuperVersion {
 
 class SuperVersionIterator final : public Iterator {
  public:
-  SuperVersionIterator(SuperVersion* sv) : sv_(sv) {}
+  SuperVersionIterator(SuperVersion* sv) : sv_(sv) {
+    it_.Clear();
+    auto mt = sv_->GetMt();
+    auto mt_it = mt->Begin();
+    if (mt_it.Valid()) mt_its_.push_back(std::move(mt_it));
+    for (auto& imm: *sv_->GetImms()) {
+      auto imm_it = imm->Begin();
+      if (imm_it.Valid()) mt_its_.push_back(std::move(imm_it));
+    }
+    sst_its_.clear();
+    for (auto& level: sv_->GetVersion()->GetLevels()) {
+      for (auto& run: level.GetRuns()) {
+        auto sst_it = run->Begin();
+        if (sst_it.Valid()) sst_its_.push_back(std::move(sst_it));
+      }
+    }
+  }
 
   /* Move the the beginning */
   void SeekToFirst();

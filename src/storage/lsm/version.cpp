@@ -56,31 +56,28 @@ std::string SuperVersion::ToString() const {
 
 void SuperVersionIterator::SeekToFirst() {
   it_.Clear();
-  mt_its_.clear();
-  auto mt = sv_->GetMt();
-  auto mt_it = mt->Begin();
-  if (mt_it.Valid()) mt_its_.push_back(std::move(mt_it));
-  for (auto& imm: *sv_->GetImms()) {
-    auto imm_it = imm->Begin();
-    if (imm_it.Valid()) mt_its_.push_back(std::move(imm_it));
+  for (auto& mt_it: mt_its_) {
+    mt_it.SeekToFirst();
+    it_.Push(&mt_it);
   }
-  sst_its_.clear();
-  for (auto& level: sv_->GetVersion()->GetLevels()) {
-    for (auto& run: level.GetRuns()) {
-      auto sst_it = run->Begin();
-      if (sst_it.Valid()) sst_its_.push_back(std::move(sst_it));
-    }
+  for (auto& sst_it: sst_its_) {
+    sst_it.SeekToFirst();
+    it_.Push(&sst_it);
   }
-  for (auto& it: mt_its_) it_.Push(&it);
-  for (auto& it: sst_its_) it_.Push(&it);
 }
 
 void SuperVersionIterator::Seek(Slice key, seq_t seq) {
   SeekToFirst();
-  while (it_.Valid()){
-    if (ParsedKey(it_.key()) >= ParsedKey(key, seq, RecordType::Value))
-      return;
-    it_.Next();
+  it_.Clear();
+  for (auto& mt_it: mt_its_) {
+    mt_it.Seek(key, seq);
+    if (mt_it.Valid() && ParsedKey(mt_it.key()) >= ParsedKey(key, seq, RecordType::Value))
+      it_.Push(&mt_it);
+  }
+  for (auto& sst_it: sst_its_) {
+    sst_it.Seek(key, seq);
+    if (sst_it.Valid() && ParsedKey(sst_it.key()) >= ParsedKey(key, seq, RecordType::Value))
+      it_.Push(&sst_it);
   }
 }
 

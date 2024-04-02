@@ -101,6 +101,8 @@ class SortedRunIterator final : public Iterator {
 
   void SeekToFirst();
 
+  void Seek(Slice key, uint64_t seq);
+
   bool Valid() override;
 
   Slice key() const override;
@@ -109,14 +111,12 @@ class SortedRunIterator final : public Iterator {
 
   void Next() override;
 
- private:
   /* The referenced sorted run */
   SortedRun* run_;
   /* The SSTable iterator of the current SSTable */
   SSTableIterator sst_it_;
   /* The index of the current SSTable */
   size_t sst_id_{0};
-  size_t record_id_{0};
 };
 
 class Level {

@@ -6,7 +6,6 @@
 #include <unistd.h>
 
 #include <fstream>
-#include <algorithm>
 
 #include "common/bloomfilter.hpp"
 
@@ -95,10 +94,23 @@ SSTableIterator SSTable::Begin() {
 
 void SSTableIterator::Seek(Slice key, uint64_t seq) {
   SeekToFirst();
-  for (size_t i = 0; i < sst_->GetSSTInfo().count_; i++) {
-    if (ParsedKey(block_it_.key()) >= ParsedKey(key, seq, RecordType::Value)) break;
-    Next();
+  const auto block_index = std::lower_bound(sst_->index_.begin(), sst_->index_.end(), key, [&](const IndexValue& index_value, const Slice& key) {
+    return ParsedKey(index_value.key_) < ParsedKey(key, seq, RecordType::Value);
+  });
+  if (block_index == sst_->index_.end()) {
+    // block_id_ = sst_->index_.size() - 1;
+    // FileReader fr(sst_->file_.get(), 2 * sst_->block_size_, sst_->index_[block_id_].block_.offset_);
+    // buf_ = AlignedBuffer(sst_->block_size_, 4096);
+    // fr.Read(buf_.data(), sst_->index_[block_id_].block_.size_);
+    // block_it_ = BlockIterator(buf_.data(), sst_->index_[block_id_].block_);
+    return;
   }
+  block_id_ = block_index - sst_->index_.begin();
+  FileReader fr(sst_->file_.get(), 2 * sst_->block_size_, sst_->index_[block_id_].block_.offset_);
+  buf_ = AlignedBuffer(sst_->block_size_, 4096);
+  fr.Read(buf_.data(), sst_->index_[block_id_].block_.size_);
+  block_it_ = BlockIterator(buf_.data(), sst_->index_[block_id_].block_);
+  block_it_.Seek(key, seq);
 }
 
 void SSTableIterator::SeekToFirst() {
@@ -107,7 +119,6 @@ void SSTableIterator::SeekToFirst() {
   block_it_ = BlockIterator(buf_.data(), sst_->index_[0].block_);
   block_id_ = 0;
   block_it_.SeekToFirst();
-  record_id_ = 0;
 }
 
 bool SSTableIterator::Valid() { return block_it_.Valid(); }
@@ -118,8 +129,7 @@ Slice SSTableIterator::value() const { return block_it_.value(); }
 
 void SSTableIterator::Next() {
   block_it_.Next();
-  record_id_++;
-  if (record_id_ < sst_->index_[block_id_].block_.count_) return;
+  if (block_it_.Valid()) return;
   if (block_id_ >= sst_->index_.size() - 1) return;
   block_id_++;
   BlockHandle handle = sst_->index_[block_id_].block_;
@@ -128,7 +138,6 @@ void SSTableIterator::Next() {
   fr.Read(buf_.data(), handle.size_);
   block_it_ = BlockIterator(buf_.data(), handle);
   block_it_.SeekToFirst();
-  record_id_ = 0;
 }
 
 void SSTableBuilder::Append(ParsedKey key, Slice value) {

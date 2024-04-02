@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <algorithm>
 
 #include "storage/lsm/block.hpp"
 #include "storage/lsm/cache.hpp"
