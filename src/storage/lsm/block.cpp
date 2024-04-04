@@ -1,5 +1,5 @@
 #include "storage/lsm/block.hpp"
-
+#include <iostream>
 namespace wing {
 
 namespace lsm {
@@ -18,10 +18,11 @@ bool BlockBuilder::Append(ParsedKey key, Slice value) {
   file_->AppendValue<offset_t>(value_length);
   file_->AppendString(value);
   current_size_ += append_size;
-  if (largest_key < key || offsets_.size() == 1){
-    largest_key = key;
-  } else if (smallest_key > key || offsets_.size() == 1){
-    smallest_key = key;
+  if (offsets_.size() <= 1 || ParsedKey(largest_key) < key){
+    largest_key = InternalKey(key);
+  } 
+  if (offsets_.size() <= 1 || ParsedKey(largest_key) > key){
+    smallest_key = InternalKey(key);
   }
   file_->Flush();
   return true;
@@ -69,6 +70,8 @@ void BlockIterator::Next() {
 bool BlockIterator::Valid() {
   offset_t key_length = *reinterpret_cast<const offset_t*>(current_);
   Slice key = Slice(current_ + sizeof(offset_t), key_length);
+  // if (ParsedKey(key).type_ == RecordType::Value)
+  // std::cout << "key: " << ParsedKey(key).user_key_ << "\n";
   return (ParsedKey(key).type_ == RecordType::Value);
 }
 

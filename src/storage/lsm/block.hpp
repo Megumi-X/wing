@@ -39,11 +39,9 @@ class BlockBuilder {
   void Clear() {
     current_size_ = offset_ = 0;
     offsets_.clear();
-    largest_key = ParsedKey();
-    smallest_key = ParsedKey();
   }
 
-  ParsedKey largest_key, smallest_key;
+  InternalKey largest_key, smallest_key;
 
  private:
   /* The maximum size of a block */

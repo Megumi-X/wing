@@ -31,9 +31,9 @@ SSTable::SSTable(SSTInfo sst_info, size_t block_size, bool use_direct_io)
     index_value.block_ = fr.ReadValue<BlockHandle>();
     index_.push_back(index_value); 
   }
-  std::sort(index_.begin(), index_.end(), [](const IndexValue& a, const IndexValue& b) {
-    return ParsedKey(a.key_) < ParsedKey(b.key_);
-  });
+  // std::sort(index_.begin(), index_.end(), [](const IndexValue& a, const IndexValue& b) {
+  //   return ParsedKey(a.key_) < ParsedKey(b.key_);
+  // });
   size_t bloom_len = fr.ReadValue<size_t>();
   
   bloom_filter_ = fr.ReadString(bloom_len);
@@ -152,8 +152,11 @@ void SSTableBuilder::Append(ParsedKey key, Slice value) {
 }
 
 void SSTableBuilder::Finish() {
-  block_builder_.Finish();
-  transfor_data_from_block_builder();
+  if (count_ == 0) return;
+  if (block_builder_.count() != 0){
+    block_builder_.Finish();
+    transfor_data_from_block_builder();
+  }
   size_t offset = index_offset_ + (index_data_.size() + 2) * sizeof(size_t);
   writer_->AppendValue<size_t>(index_data_.size());
   for (const auto & index_value : index_data_) {
@@ -184,6 +187,7 @@ void SSTableBuilder::Finish() {
 }
 
 void SSTableBuilder::transfor_data_from_block_builder() {
+  if (block_builder_.count() == 0) return;
   IndexValue index_value;
   index_value.key_ = block_builder_.largest_key;
   index_value.block_.count_ = block_builder_.count();
@@ -191,11 +195,10 @@ void SSTableBuilder::transfor_data_from_block_builder() {
   index_value.block_.offset_ = current_block_offset_;
   index_data_.push_back(index_value);
 
-  if (block_builder_.largest_key > ParsedKey(largest_key_) || index_data_.size() == 1)
+  if (index_data_.size() <= 1 || block_builder_.largest_key > ParsedKey(largest_key_))
     largest_key_ = InternalKey(block_builder_.largest_key);
-  if (block_builder_.smallest_key < ParsedKey(smallest_key_) || index_data_.size() == 1)
+  if (index_data_.size() <= 1 || block_builder_.smallest_key < ParsedKey(smallest_key_))
     smallest_key_ = InternalKey(block_builder_.smallest_key);
-  
   index_offset_ += block_builder_.size();
   count_ += block_builder_.count();
   current_block_offset_ += block_builder_.size();
