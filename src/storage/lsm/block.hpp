@@ -80,8 +80,10 @@ class BlockIterator final : public Iterator {
 
   bool Valid() override;
 
+  private:
   const char* data_{nullptr};
   char* current_{nullptr};
+  int count_{0};
   BlockHandle handle_;
 };
 

@@ -24,16 +24,19 @@ class IteratorHeap final : public Iterator {
   }
 
   bool Valid() override { 
+    if (heap_.size() == 0) return false;
     bool ret = heap_.top()->Valid();
     return ret;
  }
 
   Slice key() const override {
+    if (heap_.size() == 0) return "INVALID";
     Slice ret = heap_.top()->key(); 
     return ret;
   }
 
   Slice value() const override {
+    if (heap_.size() == 0) return "INVALID";
     Slice ret = heap_.top()->value(); 
     return ret;
   }

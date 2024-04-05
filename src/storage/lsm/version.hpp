@@ -62,6 +62,8 @@ class SuperVersion {
 
   std::string ToString() const;
 
+  size_t count_keys();
+
  private:
   std::shared_ptr<MemTable> mt_;
   std::shared_ptr<std::vector<std::shared_ptr<MemTable>>> imms_;

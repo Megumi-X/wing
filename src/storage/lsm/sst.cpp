@@ -51,7 +51,7 @@ SSTable::~SSTable() {
   }
 }
 
-GetResult SSTable::Get(Slice key, uint64_t seq, std::string* value) {
+GetResult SSTable::Get(Slice key, uint64_t seq, std::string* value, uint64_t* seq_found) {
   utils::BloomFilter filter;
   if (!filter.Find(key, bloom_filter_)) {
     // std::cout << "Negative with key: " << key << "\n";
@@ -65,19 +65,25 @@ GetResult SSTable::Get(Slice key, uint64_t seq, std::string* value) {
   AlignedBuffer buf(block_size_, 4096);
   fr.Read(buf.data(), block_index->block_.size_);
   BlockIterator block_it(buf.data(), block_index->block_);
+  seq_t latest_seq = 0;
+  GetResult ret = GetResult::kNotFound;
   for (size_t i = 0; i < block_index->block_.count_; i++) {
     if (ParsedKey(block_it.key()).user_key_ == key && ParsedKey(block_it.key()).seq_ <= seq) {
-      if (block_it.Valid()) {
-        *value = block_it.value();
-        return GetResult::kFound;
-      } else {
-        return GetResult::kDelete;
+      if (ParsedKey(block_it.key()).seq_ > latest_seq) {
+        latest_seq = ParsedKey(block_it.key()).seq_;
+        if (ParsedKey(block_it.key()).type_ == RecordType::Value) {
+          *value = block_it.value();
+          ret = GetResult::kFound;
+        } else if (ParsedKey(block_it.key()).type_ == RecordType::Deletion) {
+          ret = GetResult::kDelete;
+        }
       }
     }
     block_it.Next();
   }
   // std::cout << "False Positive with key: " << key << "\n";
-  return GetResult::kNotFound;
+  if (seq_found) *seq_found = latest_seq;
+  return ret;
 }
 
 SSTableIterator SSTable::Seek(Slice key, uint64_t seq) {

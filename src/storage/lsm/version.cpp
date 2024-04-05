@@ -10,6 +10,8 @@ bool Version::Get(std::string_view user_key, seq_t seq, std::string* value) {
     GetResult res = lev.Get(user_key, seq, value);
     if (res == GetResult::kFound) {
       return true;
+    } else if (res == GetResult::kDelete) {
+      return false;
     }
   }
   return false;
@@ -31,9 +33,17 @@ void Version::Append(uint32_t level_id, std::shared_ptr<SortedRun> sorted_run) {
 
 bool SuperVersion::Get(
     std::string_view user_key, seq_t seq, std::string* value) {
-  if (mt_->Get(user_key, seq, value) == GetResult::kFound) return true;
+  GetResult res = mt_->Get(user_key, seq, value);
+  if (res != GetResult::kNotFound) {
+    if (res == GetResult::kDelete) return false;
+    return true;
+  }
   for (auto& imm : *imms_) {
-    if (imm->Get(user_key, seq, value) == GetResult::kFound) return true;
+    res = imm->Get(user_key, seq, value);
+    if (res != GetResult::kNotFound) {
+      if (res == GetResult::kDelete) return false;
+      return true;
+    }
   }
   return version_->Get(user_key, seq, value);
 }
@@ -52,6 +62,19 @@ std::string SuperVersion::ToString() const {
   }
   ret += "]";
   return ret;
+}
+
+size_t SuperVersion::count_keys() {
+  size_t ret = 0;
+  for (auto& level : version_->GetLevels()) {
+    for (auto& run : level.GetRuns()) {
+      for (auto& sst : run->GetSSTs()) {
+        ret += sst->GetSSTInfo().count_;
+      }
+    }
+  }
+  return ret;
+
 }
 
 void SuperVersionIterator::SeekToFirst() {

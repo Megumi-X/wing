@@ -282,8 +282,167 @@ void DBImpl::FlushThread() {
 }
 
 void DBImpl::CompactionThread() {
-  // DB_ERR("Not Implemented!");
-  // TODO
+  while (!stop_signal_) {
+    std::unique_lock lck(db_mutex_);
+    // Check if it has to stop. 
+    // It has to stop when the LSM-tree shutdowns.
+    if (stop_signal_) {
+      compact_flag_ = false;
+      return;
+    }
+    std::unique_ptr<Compaction> compaction = compaction_picker_->Get(sv_->GetVersion().get());
+    if (!compaction) {
+      compact_flag_ = false;
+      compact_cv_.wait(lck);
+      continue;
+    }
+    compact_flag_ = true;
+    // Do some other things
+    db_mutex_.unlock();
+    // Do compaction
+    CompactionJob worker(filename_gen_.get(), options_.block_size,
+        options_.sst_file_size, options_.write_buffer_size,
+        options_.bloom_bits_per_key, options_.use_direct_io);
+    IteratorHeap<Iterator> heap;
+    std::vector<std::shared_ptr<SSTableIterator>> iters;
+    std::shared_ptr<SortedRunIterator> run_iter;
+    if (compaction->input_ssts().size() > 0) {
+      for (auto& sst: compaction->input_ssts()) {
+        iters.push_back(std::make_shared<SSTableIterator>(sst.get()));
+        heap.Push(iters.back().get());
+        sst->SetCompactionInProcess(true);
+      }
+    }
+    int overlap_count = 0;
+    if (compaction->target_sorted_run()) {
+      if (compaction->src_level() > 0) {
+        for (auto& sst: compaction->target_sorted_run()->GetSSTs()) {
+          if (sst->GetLargestKey() < compaction->input_ssts()[0]->GetSmallestKey() ||
+              sst->GetSmallestKey() > compaction->input_ssts()[0]->GetLargestKey()) continue;
+          iters.push_back(std::make_shared<SSTableIterator>(sst.get()));
+          heap.Push(iters.back().get());
+          overlap_count++;
+          sst->SetCompactionInProcess(true);
+        }
+      } else {
+        run_iter = std::make_shared<SortedRunIterator>(compaction->target_sorted_run().get(),
+          SSTableIterator(compaction->target_sorted_run()->GetSSTs()[0].get()), 0);
+        heap.Push(run_iter.get());
+      }
+    }
+    std::vector<SSTInfo> ssts;
+    if (compaction->target_sorted_run() && overlap_count > 0){
+      ssts = worker.Run(heap);
+      for (auto& sst: compaction->input_ssts()) {
+        sst->SetRemoveTag(true);
+      }
+    } else if (compaction->src_level() == 0) {
+      ssts = worker.Run(heap);
+      for (auto& sst: compaction->input_ssts()) {
+        sst->SetRemoveTag(true);
+      }
+    } else {
+      for (auto& sst: compaction->input_ssts()) {
+        ssts.push_back(sst->GetSSTInfo());
+      }
+    }
+    db_mutex_.lock();
+    // Create a new superversion and install it
+    size_t old_count = sv_->count_keys();
+    std::shared_ptr<Version> new_version = std::make_shared<Version>();
+    size_t src_level_index = compaction->src_level();
+    size_t target_level_index = compaction->target_level();
+    if (src_level_index == 0) {
+      new_version->Append(target_level_index, std::make_shared<SortedRun>(ssts, options_.block_size, options_.use_direct_io));
+      std::vector<std::shared_ptr<SortedRun>> inputs;
+      int count = 0;
+      for (auto& run: sv_->GetVersion()->GetLevels()[src_level_index].GetRuns()) {
+        std::vector<std::shared_ptr<SSTable>> ssts;
+        for (auto& sst: run->GetSSTs()) {
+          if (sst->GetCompactionInProcess()) continue;
+          ssts.push_back(sst);
+          count++;
+        }
+        if (ssts.size() == 0) continue;
+        inputs.push_back(std::make_shared<SortedRun>(ssts, options_.block_size, options_.use_direct_io));
+      }
+      new_version->Append(src_level_index, inputs);
+      for (size_t i = 2; i < sv_->GetVersion()->GetLevels().size(); i++) {
+        new_version->Append(i, sv_->GetVersion()->GetLevels()[i].GetRuns());
+      }
+    } else {
+      size_t levels_num = sv_->GetVersion()->GetLevels().size();
+      for (size_t i = 0; i < levels_num; i++) {
+        if (i == target_level_index) {
+          // new_version->Append(i, std::make_shared<SortedRun>(ssts, options_.block_size, options_.use_direct_io));
+          if (!compaction->target_sorted_run()) {
+            new_version->Append(i, std::make_shared<SortedRun>(ssts, options_.block_size, options_.use_direct_io));
+            continue;
+          }
+          std::vector<SSTInfo> outputs;
+          if (overlap_count == 0) {
+            if (compaction->input_ssts()[0]->GetLargestKey() < compaction->target_sorted_run()->GetSmallestKey()) {
+              outputs.push_back(compaction->input_ssts()[0]->GetSSTInfo());
+              for (auto& sst: compaction->target_sorted_run()->GetSSTs()) {
+                outputs.push_back(sst->GetSSTInfo());
+              }             
+            } else if (compaction->input_ssts()[0]->GetSmallestKey() > compaction->target_sorted_run()->GetLargestKey()) {
+              for (auto& sst: compaction->target_sorted_run()->GetSSTs()) {
+                outputs.push_back(sst->GetSSTInfo());
+              }
+              outputs.push_back(compaction->input_ssts()[0]->GetSSTInfo());
+            } else {
+              int count = 0;
+              for (auto& sst: compaction->target_sorted_run()->GetSSTs()) {
+                if (sst->GetLargestKey() < compaction->input_ssts()[0]->GetSmallestKey()){
+                  outputs.push_back(sst->GetSSTInfo());
+                } else {
+                  if (count == 0){
+                    outputs.push_back(compaction->input_ssts()[0]->GetSSTInfo());
+                    count++;
+                  }
+                  outputs.push_back(sst->GetSSTInfo());
+                }
+              }
+            }
+            new_version->Append(i, std::make_shared<SortedRun>(outputs, options_.block_size, options_.use_direct_io));
+            continue;
+          }         
+          int count = 0;
+          for (auto& sst: sv_->GetVersion()->GetLevels()[target_level_index].GetRuns()[0]->GetSSTs()) {
+            if (sst->GetCompactionInProcess()) {
+              if (count == 0) {
+                outputs.insert(outputs.end(), ssts.begin(), ssts.end());
+                count++;
+              } 
+              sst->SetRemoveTag(true);
+              continue;
+            }
+            outputs.push_back(sst->GetSSTInfo());
+          }
+          new_version->Append(i, std::make_shared<SortedRun>(outputs, options_.block_size, options_.use_direct_io));
+        } else if (i == src_level_index) {
+          std::vector<std::shared_ptr<SSTable>> inputs;
+          for (auto& sst: sv_->GetVersion()->GetLevels()[src_level_index].GetRuns()[0]->GetSSTs()) {
+            if (sst->GetCompactionInProcess()) continue;
+            inputs.push_back(sst);
+          }
+          new_version->Append(i, std::make_shared<SortedRun>(inputs, options_.block_size, options_.use_direct_io));
+        } else {
+          new_version->Append(i, sv_->GetVersion()->GetLevels()[i].GetRuns());
+        }
+      }
+      if (target_level_index == levels_num) {
+        new_version->Append(target_level_index, std::make_shared<SortedRun>(ssts, options_.block_size, options_.use_direct_io));
+      }
+    }
+    std::shared_ptr<SuperVersion> new_sv = std::make_shared<SuperVersion>(sv_->GetMt(), sv_->GetImms(), new_version);
+    size_t new_count = new_sv->count_keys();
+    if (new_count != old_count)
+      std::cout << "old count: " << old_count << " new count: " << new_count << " src_level: " << compaction->src_level() << " target_level: " << compaction->target_level() << " input size: " << compaction->input_ssts().size() << " overlap: " << overlap_count << std::endl;
+    InstallSV(new_sv);
+    db_mutex_.unlock();
+  }
 }
 
 std::vector<std::shared_ptr<MemTable>> DBImpl::PickMemTables() {

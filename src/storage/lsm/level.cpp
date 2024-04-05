@@ -1,21 +1,18 @@
 #include "storage/lsm/level.hpp"
+#include <iostream>
 
 namespace wing {
 
 namespace lsm {
 
-GetResult SortedRun::Get(Slice key, uint64_t seq, std::string* value) {
+GetResult SortedRun::Get(Slice key, uint64_t seq, std::string* value, seq_t* latest_seq) {
   const auto sst_index = std::lower_bound(ssts_.begin(), ssts_.end(), key, [&](const std::shared_ptr<SSTable>& sst1, const Slice& key) {
     return sst1->GetLargestKey() < ParsedKey(key, seq, RecordType::Value);
   });
   if (sst_index == ssts_.end()) {
     return GetResult::kNotFound;
   }
-  auto res = sst_index->get()->Get(key, seq, value);
-  if (res != GetResult::kNotFound) {
-    return res;
-  }
-  return GetResult::kNotFound;
+  return sst_index->get()->Get(key, seq, value, latest_seq);
 }
 
 SortedRunIterator SortedRun::Seek(Slice key, uint64_t seq) {
@@ -75,13 +72,18 @@ void SortedRunIterator::Next() {
 }
 
 GetResult Level::Get(Slice key, uint64_t seq, std::string* value) {
+  seq_t latest_seq = 0;
+  GetResult ret = GetResult::kNotFound;
   for (int i = runs_.size() - 1; i >= 0; --i) {
-    auto res = runs_[i]->Get(key, seq, value);
+    auto res = runs_[i]->Get(key, seq, value, &latest_seq);
     if (res != GetResult::kNotFound) {
-      return res;
+      if (seq > latest_seq) {
+        latest_seq = seq;
+        ret = res;
+      }
     }
   }
-  return GetResult::kNotFound;
+  return ret;
 }
 
 void Level::Append(std::vector<std::shared_ptr<SortedRun>> runs) {

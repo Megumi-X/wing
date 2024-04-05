@@ -24,19 +24,19 @@ class CompactionJob {
   template <typename IterT>
   std::vector<SSTInfo> Run(IterT&& it) {
     std::vector<SSTInfo> sst_list;
-    std::string last_user_key = "";
+    std::string last_user_key;
     seq_t last_seq = 0;
     auto file_info_pair = file_gen_->Generate();
     std::vector<std::unique_ptr<SSTableBuilder>> builders;
     builders.emplace_back(std::make_unique<SSTableBuilder>(std::make_unique<FileWriter>(std::make_unique<SeqWriteFile>(file_info_pair.first, use_direct_io_), write_buffer_size_), block_size_, bloom_bits_per_key_));
-    while (it.Valid()) {
-      ParsedKey current_full_key = ParsedKey(it.key());
-      current_full_key.type_ = RecordType::Value;
-      if (current_full_key.user_key_ == last_user_key && current_full_key.seq_ < last_seq) {
+    while (it.Valid()){
+      std::string current_user_key = std::string(ParsedKey(it.key()).user_key_);
+      seq_t current_seq = ParsedKey(it.key()).seq_;
+      if (current_user_key == last_user_key && current_seq < last_seq) {
         it.Next();
         continue;
       }
-      if (!it.Valid()) break;
+      size_t append_size = it.key().size() + it.value().size() + 3 * sizeof(offset_t);
       if (builders.back()->GetIndexOffset() + block_size_ > sst_size_) {
         builders.back()->Finish();
         SSTInfo sst_info;
@@ -50,9 +50,13 @@ class CompactionJob {
         file_info_pair = file_gen_->Generate();
         builders.emplace_back(std::make_unique<SSTableBuilder>(std::make_unique<FileWriter>(std::make_unique<SeqWriteFile>(file_info_pair.first, use_direct_io_), write_buffer_size_), block_size_, bloom_bits_per_key_));
       }
-      builders.back()->Append(current_full_key, it.value());
-      last_user_key = current_full_key.user_key_;
-      last_seq = current_full_key.seq_;
+      if (ParsedKey(it.key()).type_ == RecordType::Value) {
+        builders.back()->Append(ParsedKey(current_user_key, current_seq, RecordType::Value), it.value());        
+      } else if (ParsedKey(it.key()).type_ == RecordType::Deletion) {
+        builders.back()->Append(ParsedKey(current_user_key, current_seq, RecordType::Deletion), it.value());
+      }
+      last_user_key = current_user_key;
+      last_seq = current_seq;
       it.Next();
     }
     if (builders.back()->count() == 0) {

@@ -41,7 +41,7 @@ class SortedRun {
    * value, and returns GetResult::kDelete If there is no such record, it
    * returns GetResult::kNotFound.
    * */
-  GetResult Get(Slice key, uint64_t seq, std::string* value);
+  GetResult Get(Slice key, uint64_t seq, std::string* value, uint64_t* seq_found = nullptr);
 
   /* Return an iterator positioned at the first record >= (key, seq). */
   SortedRunIterator Seek(Slice key, uint64_t seq);

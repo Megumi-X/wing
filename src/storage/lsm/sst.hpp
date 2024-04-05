@@ -39,7 +39,7 @@ class SSTable {
    * value, and returns GetResult::kDelete If there is no such record, it
    * returns GetResult::kNotFound.
    * */
-  GetResult Get(Slice key, uint64_t seq, std::string* value);
+  GetResult Get(Slice key, uint64_t seq, std::string* value, uint64_t* seq_found = nullptr);
 
   /* Return an iterator positioned at the first record that is not smaller than
    * (key, seq). */
@@ -91,7 +91,9 @@ class SSTableIterator final : public Iterator {
  public:
   SSTableIterator() = default;
 
-  SSTableIterator(SSTable* sst) : sst_(sst), buf_(sst->block_size_, 4096) {}
+  SSTableIterator(SSTable* sst) : sst_(sst), buf_(sst->block_size_, 4096) {
+    SeekToFirst();
+  }
 
   /* Move the the beginning */
   void SeekToFirst();

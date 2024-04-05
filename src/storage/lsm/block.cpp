@@ -43,19 +43,22 @@ void BlockIterator::Seek(Slice user_key, seq_t seq) {
     Slice key = Slice(data_ + offset + sizeof(offset_t), key_length);
     if (ParsedKey(key) >= ParsedKey(user_key, seq, RecordType::Value)) {
       current_ = const_cast<char*>(data_ + offset);
+      count_ = i;
       return;
     }
   }
 }
 
-void BlockIterator::SeekToFirst() { current_ = const_cast<char*>(data_); }
+void BlockIterator::SeekToFirst() { current_ = const_cast<char*>(data_); count_ = 0;}
 
 Slice BlockIterator::key() const {
+  if (data_ == nullptr || current_ == nullptr) return "INVALID";
   offset_t key_length = *reinterpret_cast<const offset_t*>(current_);
   return Slice(current_ + sizeof(offset_t), key_length);
 }
 
 Slice BlockIterator::value() const {
+  if (data_ == nullptr || current_ == nullptr) return "INVALID";
   offset_t key_length = *reinterpret_cast<const offset_t*>(current_);
   offset_t value_length = *reinterpret_cast<const offset_t*>(current_ + sizeof(offset_t) + key_length);
   return Slice(current_ + sizeof(offset_t) + key_length + sizeof(offset_t), value_length);
@@ -65,14 +68,15 @@ void BlockIterator::Next() {
   offset_t key_length = *reinterpret_cast<const offset_t*>(current_);
   offset_t value_length = *reinterpret_cast<const offset_t*>(current_ + sizeof(offset_t) + key_length);
   current_ += sizeof(offset_t) + key_length + sizeof(offset_t) + value_length;
+  count_++;
 }
 
 bool BlockIterator::Valid() {
-  offset_t key_length = *reinterpret_cast<const offset_t*>(current_);
-  Slice key = Slice(current_ + sizeof(offset_t), key_length);
-  // if (ParsedKey(key).type_ == RecordType::Value)
-  // std::cout << "key: " << ParsedKey(key).user_key_ << "\n";
-  return (ParsedKey(key).type_ == RecordType::Value);
+  // if (data_ == nullptr || current_ == nullptr) return false;
+  // offset_t key_length = *reinterpret_cast<const offset_t*>(current_);
+  // Slice key = Slice(current_ + sizeof(offset_t), key_length);
+  // return (ParsedKey(key).type_ == RecordType::Value);
+  return count_ < handle_.count_;
 }
 
 }  // namespace lsm
