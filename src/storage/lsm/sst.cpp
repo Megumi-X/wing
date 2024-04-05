@@ -41,7 +41,6 @@ SSTable::SSTable(SSTInfo sst_info, size_t block_size, bool use_direct_io)
   largest_key_ = InternalKey(fr.ReadString(max_len));
   size_t min_len = fr.ReadValue<size_t>();
   smallest_key_ = InternalKey(fr.ReadString(min_len));
-  
 }
 
 SSTable::~SSTable() {
@@ -158,11 +157,11 @@ void SSTableBuilder::Append(ParsedKey key, Slice value) {
 }
 
 void SSTableBuilder::Finish() {
-  if (count_ == 0) return;
   if (block_builder_.count() != 0){
     block_builder_.Finish();
     transfor_data_from_block_builder();
   }
+  if (count_ == 0) return;
   size_t offset = index_offset_ + (index_data_.size() + 2) * sizeof(size_t);
   writer_->AppendValue<size_t>(index_data_.size());
   for (const auto & index_value : index_data_) {

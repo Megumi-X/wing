@@ -300,6 +300,8 @@ void DBImpl::CompactionThread() {
     // Do some other things
     db_mutex_.unlock();
     // Do compaction
+    // int count1 = 0;
+    // int count2 = 0;
     CompactionJob worker(filename_gen_.get(), options_.block_size,
         options_.sst_file_size, options_.write_buffer_size,
         options_.bloom_bits_per_key, options_.use_direct_io);
@@ -311,8 +313,10 @@ void DBImpl::CompactionThread() {
         iters.push_back(std::make_shared<SSTableIterator>(sst.get()));
         heap.Push(iters.back().get());
         sst->SetCompactionInProcess(true);
+        // count1 += sst->GetSSTInfo().count_;
       }
     }
+    // std::cout << "tmp_count1: " << count1 << std::endl;
     int overlap_count = 0;
     if (compaction->target_sorted_run()) {
       if (compaction->src_level() > 0) {
@@ -323,6 +327,7 @@ void DBImpl::CompactionThread() {
           heap.Push(iters.back().get());
           overlap_count++;
           sst->SetCompactionInProcess(true);
+          // count1 += sst->GetSSTInfo().count_;
         }
       } else {
         run_iter = std::make_shared<SortedRunIterator>(compaction->target_sorted_run().get(),
@@ -334,21 +339,23 @@ void DBImpl::CompactionThread() {
     if (compaction->target_sorted_run() && overlap_count > 0){
       ssts = worker.Run(heap);
       for (auto& sst: compaction->input_ssts()) {
-        sst->SetRemoveTag(true);
+        // sst->SetRemoveTag(true);
       }
+      // for (auto& sst: ssts) count2 += sst.count_;
     } else if (compaction->src_level() == 0) {
       ssts = worker.Run(heap);
       for (auto& sst: compaction->input_ssts()) {
-        sst->SetRemoveTag(true);
+        // sst->SetRemoveTag(true);
       }
     } else {
       for (auto& sst: compaction->input_ssts()) {
         ssts.push_back(sst->GetSSTInfo());
       }
     }
+    // std::cout << "count1: " << count1 << " count2: " << count2 << std::endl;
     db_mutex_.lock();
     // Create a new superversion and install it
-    size_t old_count = sv_->count_keys();
+    // size_t old_count = sv_->count_keys();
     std::shared_ptr<Version> new_version = std::make_shared<Version>();
     size_t src_level_index = compaction->src_level();
     size_t target_level_index = compaction->target_level();
@@ -415,7 +422,7 @@ void DBImpl::CompactionThread() {
                 outputs.insert(outputs.end(), ssts.begin(), ssts.end());
                 count++;
               } 
-              sst->SetRemoveTag(true);
+              // sst->SetRemoveTag(true);
               continue;
             }
             outputs.push_back(sst->GetSSTInfo());
@@ -423,10 +430,12 @@ void DBImpl::CompactionThread() {
           new_version->Append(i, std::make_shared<SortedRun>(outputs, options_.block_size, options_.use_direct_io));
         } else if (i == src_level_index) {
           std::vector<std::shared_ptr<SSTable>> inputs;
+          // int count = 0;
           for (auto& sst: sv_->GetVersion()->GetLevels()[src_level_index].GetRuns()[0]->GetSSTs()) {
-            if (sst->GetCompactionInProcess()) continue;
+            if (sst->GetCompactionInProcess()){continue;}
             inputs.push_back(sst);
           }
+          // std::cout << "count: " << count << std::endl;
           new_version->Append(i, std::make_shared<SortedRun>(inputs, options_.block_size, options_.use_direct_io));
         } else {
           new_version->Append(i, sv_->GetVersion()->GetLevels()[i].GetRuns());
@@ -437,9 +446,9 @@ void DBImpl::CompactionThread() {
       }
     }
     std::shared_ptr<SuperVersion> new_sv = std::make_shared<SuperVersion>(sv_->GetMt(), sv_->GetImms(), new_version);
-    size_t new_count = new_sv->count_keys();
-    if (new_count != old_count)
-      std::cout << "old count: " << old_count << " new count: " << new_count << " src_level: " << compaction->src_level() << " target_level: " << compaction->target_level() << " input size: " << compaction->input_ssts().size() << " overlap: " << overlap_count << std::endl;
+    // size_t new_count = new_sv->count_keys();
+    // if (new_count != old_count)
+    //   std::cout << "old count: " << old_count << " new count: " << new_count << " src_level: " << compaction->src_level() << " target_level: " << compaction->target_level() << " input size: " << compaction->input_ssts().size() << " overlap: " << overlap_count << std::endl;
     InstallSV(new_sv);
     db_mutex_.unlock();
   }
