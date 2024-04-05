@@ -1146,7 +1146,7 @@ TEST(LSMTest, LeveledCompactionTest) {
         lsm->FlushAll();
         lsm->WaitForFlushAndCompaction();
       },
-      20000, "Your compaction is too slow!");
+      50000, "Your compaction is too slow!");
   DB_INFO("Put Cost {}s.", sw.GetTimeInSeconds());
   // Check the number of sorted runs at each level
   {

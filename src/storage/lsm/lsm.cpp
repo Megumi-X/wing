@@ -339,13 +339,13 @@ void DBImpl::CompactionThread() {
     if (compaction->target_sorted_run() && overlap_count > 0){
       ssts = worker.Run(heap);
       for (auto& sst: compaction->input_ssts()) {
-        // sst->SetRemoveTag(true);
+        sst->SetRemoveTag(true);
       }
       // for (auto& sst: ssts) count2 += sst.count_;
     } else if (compaction->src_level() == 0) {
       ssts = worker.Run(heap);
       for (auto& sst: compaction->input_ssts()) {
-        // sst->SetRemoveTag(true);
+        sst->SetRemoveTag(true);
       }
     } else {
       for (auto& sst: compaction->input_ssts()) {
@@ -366,12 +366,18 @@ void DBImpl::CompactionThread() {
       for (auto& run: sv_->GetVersion()->GetLevels()[src_level_index].GetRuns()) {
         std::vector<std::shared_ptr<SSTable>> ssts;
         for (auto& sst: run->GetSSTs()) {
-          if (sst->GetCompactionInProcess()) continue;
+          if (sst->GetCompactionInProcess()) {
+            sst->SetRemoveTag(true);
+            continue;
+          }
           ssts.push_back(sst);
           count++;
         }
         if (ssts.size() == 0) continue;
         inputs.push_back(std::make_shared<SortedRun>(ssts, options_.block_size, options_.use_direct_io));
+      }
+      if (compaction->target_sorted_run()) {
+        for (auto& sst: compaction->target_sorted_run()->GetSSTs()) sst->SetRemoveTag(true);
       }
       new_version->Append(src_level_index, inputs);
       for (size_t i = 2; i < sv_->GetVersion()->GetLevels().size(); i++) {
@@ -422,7 +428,7 @@ void DBImpl::CompactionThread() {
                 outputs.insert(outputs.end(), ssts.begin(), ssts.end());
                 count++;
               } 
-              // sst->SetRemoveTag(true);
+              sst->SetRemoveTag(true);
               continue;
             }
             outputs.push_back(sst->GetSSTInfo());
@@ -432,7 +438,10 @@ void DBImpl::CompactionThread() {
           std::vector<std::shared_ptr<SSTable>> inputs;
           // int count = 0;
           for (auto& sst: sv_->GetVersion()->GetLevels()[src_level_index].GetRuns()[0]->GetSSTs()) {
-            if (sst->GetCompactionInProcess()){continue;}
+            if (sst->GetCompactionInProcess()){
+              // sst->SetRemoveTag(true);
+              continue;
+            }
             inputs.push_back(sst);
           }
           // std::cout << "count: " << count << std::endl;
