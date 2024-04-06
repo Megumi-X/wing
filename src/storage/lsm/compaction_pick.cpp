@@ -21,14 +21,14 @@ std::unique_ptr<Compaction> LeveledCompactionPicker::Get(Version* version) {
       int smallest_overlap = std::numeric_limits<int>::max();
       std::shared_ptr<SSTable> smallest_overlap_sst;
       for (auto& sst : input_runs[0]->GetSSTs()) {
-        if (sst->GetLargestKey() < target_runs[0]->GetSmallestKey() || sst->GetSmallestKey() > target_runs[0]->GetLargestKey()){
+        if (sst->GetLargestKey().user_key_ < target_runs[0]->GetSmallestKey().user_key_ || sst->GetSmallestKey().user_key_ > target_runs[0]->GetLargestKey().user_key_){
           smallest_overlap_sst = std::shared_ptr<SSTable>(sst);
           smallest_overlap = 0;
           break;
         }
         int overlap_count = 0;
         for (auto& target_sst : target_runs[0]->GetSSTs()) {
-          if (sst->GetLargestKey() < target_sst->GetSmallestKey() || sst->GetSmallestKey() > target_sst->GetLargestKey()) {
+          if (sst->GetLargestKey().user_key_ < target_sst->GetSmallestKey().user_key_ || sst->GetSmallestKey().user_key_ > target_sst->GetLargestKey().user_key_) {
             continue;
           }
           overlap_count++;

@@ -321,8 +321,8 @@ void DBImpl::CompactionThread() {
     if (compaction->target_sorted_run()) {
       if (compaction->src_level() > 0) {
         for (auto& sst: compaction->target_sorted_run()->GetSSTs()) {
-          if (sst->GetLargestKey() < compaction->input_ssts()[0]->GetSmallestKey() ||
-              sst->GetSmallestKey() > compaction->input_ssts()[0]->GetLargestKey()) continue;
+          if (sst->GetLargestKey().user_key_ < compaction->input_ssts()[0]->GetSmallestKey().user_key_ ||
+              sst->GetSmallestKey().user_key_ > compaction->input_ssts()[0]->GetLargestKey().user_key_) continue;
           iters.push_back(std::make_shared<SSTableIterator>(sst.get()));
           heap.Push(iters.back().get());
           overlap_count++;
@@ -394,12 +394,12 @@ void DBImpl::CompactionThread() {
           }
           std::vector<SSTInfo> outputs;
           if (overlap_count == 0) {
-            if (compaction->input_ssts()[0]->GetLargestKey() < compaction->target_sorted_run()->GetSmallestKey()) {
+            if (compaction->input_ssts()[0]->GetLargestKey().user_key_ < compaction->target_sorted_run()->GetSmallestKey().user_key_) {
               outputs.push_back(compaction->input_ssts()[0]->GetSSTInfo());
               for (auto& sst: compaction->target_sorted_run()->GetSSTs()) {
                 outputs.push_back(sst->GetSSTInfo());
               }             
-            } else if (compaction->input_ssts()[0]->GetSmallestKey() > compaction->target_sorted_run()->GetLargestKey()) {
+            } else if (compaction->input_ssts()[0]->GetSmallestKey().user_key_ > compaction->target_sorted_run()->GetLargestKey().user_key_) {
               for (auto& sst: compaction->target_sorted_run()->GetSSTs()) {
                 outputs.push_back(sst->GetSSTInfo());
               }
@@ -407,7 +407,7 @@ void DBImpl::CompactionThread() {
             } else {
               int count = 0;
               for (auto& sst: compaction->target_sorted_run()->GetSSTs()) {
-                if (sst->GetLargestKey() < compaction->input_ssts()[0]->GetSmallestKey()){
+                if (sst->GetLargestKey().user_key_ < compaction->input_ssts()[0]->GetSmallestKey().user_key_){
                   outputs.push_back(sst->GetSSTInfo());
                 } else {
                   if (count == 0){

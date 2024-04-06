@@ -41,7 +41,7 @@ class CompactionJob {
         continue;
       }
       size_t append_size = it.key().size() + it.value().size() + 3 * sizeof(offset_t);
-      if (builders.back()->GetIndexOffset() + block_size_ > sst_size_) {
+      if (builders.back()->GetIndexOffset() + append_size > sst_size_) {
         builders.back()->Finish();
         SSTInfo sst_info;
         sst_info.sst_id_ = file_info_pair.second;
