@@ -321,8 +321,8 @@ void DBImpl::CompactionThread() {
     if (compaction->target_sorted_run()) {
       if (compaction->src_level() > 0) {
         for (auto& sst: compaction->target_sorted_run()->GetSSTs()) {
-          if (sst->GetLargestKey().user_key_ < compaction->input_ssts()[0]->GetSmallestKey().user_key_ ||
-              sst->GetSmallestKey().user_key_ > compaction->input_ssts()[0]->GetLargestKey().user_key_) continue;
+          if (sst->GetLargestKey().user_key_ < compaction->input_ssts()[0]->GetSmallestKey().user_key_) continue;
+          else if (sst->GetSmallestKey().user_key_ > compaction->input_ssts()[0]->GetLargestKey().user_key_) break;
           iters.push_back(std::make_shared<SSTableIterator>(sst.get()));
           heap.Push(iters.back().get());
           overlap_count++;
