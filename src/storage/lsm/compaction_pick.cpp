@@ -7,7 +7,7 @@ namespace lsm {
 std::unique_ptr<Compaction> LeveledCompactionPicker::Get(Version* version) {
   std::vector<Level> levels = version->GetLevels();
   if (levels.size() == 0) return nullptr; 
-  for (int i = levels.size() - 1; i >= 1; i--) {
+  for (int i = 1; i < levels.size(); i++) {
     if (levels[i].size() > base_level_size_ * std::pow(ratio_, i - 1)) {
       auto input_runs = levels[i].GetRuns();
       if (i == levels.size() - 1 || levels[i + 1].GetRuns().size() == 0 ||
@@ -19,7 +19,7 @@ std::unique_ptr<Compaction> LeveledCompactionPicker::Get(Version* version) {
       auto target_runs = levels[i + 1].GetRuns();
       std::vector<std::shared_ptr<SSTable>> input_tables;
       int smallest_overlap = std::numeric_limits<int>::max();
-      std::shared_ptr<SSTable> smallest_overlap_sst;
+      std::shared_ptr<SSTable> smallest_overlap_sst = input_runs[0]->GetSSTs()[0];
       for (auto& sst : input_runs[0]->GetSSTs()) {
         if (sst->GetLargestKey().user_key_ < target_runs[0]->GetSmallestKey().user_key_ || sst->GetSmallestKey().user_key_ > target_runs[0]->GetLargestKey().user_key_){
           smallest_overlap_sst = std::shared_ptr<SSTable>(sst);

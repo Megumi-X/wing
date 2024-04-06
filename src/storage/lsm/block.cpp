@@ -24,7 +24,7 @@ bool BlockBuilder::Append(ParsedKey key, Slice value) {
   if (offsets_.size() <= 1 || ParsedKey(largest_key) > key){
     smallest_key = InternalKey(key);
   }
-  file_->Flush();
+  // file_->Flush();
   return true;
 }
 
