@@ -147,6 +147,9 @@ void SSTableIterator::Next() {
 
 void SSTableBuilder::Append(ParsedKey key, Slice value) {
   utils::BloomFilter filter;
+  if (!key_hashes_.size()) {
+    smallest_key_ = InternalKey(key);
+  }
   key_hashes_.push_back(filter.BloomHash(key.user_key_));
   if (!block_builder_.Append(key, value)) {
     block_builder_.Finish();
@@ -202,8 +205,8 @@ void SSTableBuilder::transfor_data_from_block_builder() {
 
   if (index_data_.size() <= 1 || block_builder_.largest_key > ParsedKey(largest_key_))
     largest_key_ = InternalKey(block_builder_.largest_key);
-  if (index_data_.size() <= 1 || block_builder_.smallest_key < ParsedKey(smallest_key_))
-    smallest_key_ = InternalKey(block_builder_.smallest_key);
+  // if (index_data_.size() <= 1 || block_builder_.smallest_key < ParsedKey(smallest_key_))
+  //   smallest_key_ = InternalKey(block_builder_.smallest_key);
   index_offset_ += block_builder_.size();
   count_ += block_builder_.count();
   current_block_offset_ += block_builder_.size();

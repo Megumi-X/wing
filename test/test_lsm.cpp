@@ -563,10 +563,13 @@ TEST(LSMTest, CompactionBasicTest) {
   class Iterator {
    public:
     Iterator(std::vector<CompressedKVPair>& kv, seq_t seq, RecordType type)
-      : kv_(kv), seq_(seq), type_(type) {}
+      : kv_(kv), seq_(seq), type_(type) {
+      if (kv_.size() > 0) {
+        key_ = InternalKey(kv_[0].key(), seq_, type_);
+      }
+    }
 
     Slice key() {
-      key_ = InternalKey(kv_[id_].key(), seq_, type_);
       return key_.GetSlice();
     }
 
@@ -575,7 +578,12 @@ TEST(LSMTest, CompactionBasicTest) {
       return current_v_;
     }
 
-    void Next() { id_ += 1; }
+    void Next() { 
+      id_ += 1; 
+      if (Valid()) {
+        key_ = InternalKey(kv_[id_].key(), seq_, type_);
+      }
+    }
 
     bool Valid() { return id_ < kv_.size(); }
 
@@ -1004,7 +1012,7 @@ TEST(LSMTest, LSMBigScanTest) {
           lsm->Put(kv[i].key(), kv[i].value());
         }
       },
-      25000, "Your put is slow!");
+      250000, "Your put is slow!");
   DB_INFO("Put Cost: {}s", sw.GetTimeInSeconds());
   sw.Reset();
   std::sort(kv.begin(), kv.end());

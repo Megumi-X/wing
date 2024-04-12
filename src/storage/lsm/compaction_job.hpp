@@ -34,8 +34,9 @@ class CompactionJob {
     // int count12 = 0;
     while (it.Valid()){
       // count10++;
-      std::string current_user_key = std::string(ParsedKey(it.key()).user_key_);
-      seq_t current_seq = ParsedKey(it.key()).seq_;
+      auto pkey = ParsedKey(it.key());
+      auto current_user_key = pkey.user_key_;
+      seq_t current_seq = pkey.seq_;
       if (current_user_key == last_user_key && current_seq < last_seq) {
         it.Next();
         continue;
@@ -56,10 +57,10 @@ class CompactionJob {
         // count11 += sst_info.count_;
         // std::cout << "count10: " << count10 << " count11: " << count11 << " count12: " << count12 << "\n";
       }
-      if (ParsedKey(it.key()).type_ == RecordType::Value) {
+      if (pkey.type_ == RecordType::Value) {
         builders.back()->Append(ParsedKey(current_user_key, current_seq, RecordType::Value), it.value());  
         // count12 ++;    
-      } else if (ParsedKey(it.key()).type_ == RecordType::Deletion) {
+      } else if (pkey.type_ == RecordType::Deletion) {
         builders.back()->Append(ParsedKey(current_user_key, current_seq, RecordType::Deletion), it.value());
         // count12++;
       } else {

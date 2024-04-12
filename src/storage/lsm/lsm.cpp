@@ -200,7 +200,7 @@ void DBImpl::WaitForFlushAndCompaction() {
       return;
     }
     db_mutex_.unlock();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
   }
 }
 
@@ -296,6 +296,7 @@ void DBImpl::CompactionThread() {
       compact_cv_.wait(lck);
       continue;
     }
+    // DB_INFO("Compaction: {}, {}, {} -> {}", compaction->input_runs().size(), compaction->input_ssts().size(), compaction->src_level(), compaction->target_level());
     compact_flag_ = true;
     // Do some other things
     db_mutex_.unlock();
@@ -327,24 +328,33 @@ void DBImpl::CompactionThread() {
           heap.Push(iters.back().get());
           overlap_count++;
           sst->SetCompactionInProcess(true);
+          sst->SetRemoveTag(true);
           // count1 += sst->GetSSTInfo().count_;
         }
+        // DB_INFO("{}", iters.size());
       } else {
         run_iter = std::make_shared<SortedRunIterator>(compaction->target_sorted_run().get(),
           SSTableIterator(compaction->target_sorted_run()->GetSSTs()[0].get()), 0);
         heap.Push(run_iter.get());
+        for (auto& sst: compaction->target_sorted_run()->GetSSTs()) {
+          sst->SetCompactionInProcess(true);
+          sst->SetRemoveTag(true);
+        }
       }
     }
     std::vector<SSTInfo> ssts;
+    // StopWatch sw;
     if (compaction->target_sorted_run() && overlap_count > 0){
       ssts = worker.Run(heap);
       for (auto& sst: compaction->input_ssts()) {
+        sst->SetCompactionInProcess(true);
         sst->SetRemoveTag(true);
       }
       // for (auto& sst: ssts) count2 += sst.count_;
     } else if (compaction->src_level() == 0) {
       ssts = worker.Run(heap);
       for (auto& sst: compaction->input_ssts()) {
+        sst->SetCompactionInProcess(true);
         sst->SetRemoveTag(true);
       }
     } else {
@@ -352,6 +362,7 @@ void DBImpl::CompactionThread() {
         ssts.push_back(sst->GetSSTInfo());
       }
     }
+    // DB_INFO("Cost {}s", sw.GetTimeInSeconds());
     // std::cout << "count1: " << count1 << " count2: " << count2 << std::endl;
     db_mutex_.lock();
     // Create a new superversion and install it
@@ -439,7 +450,8 @@ void DBImpl::CompactionThread() {
           // int count = 0;
           for (auto& sst: sv_->GetVersion()->GetLevels()[src_level_index].GetRuns()[0]->GetSSTs()) {
             if (sst->GetCompactionInProcess()){
-              // sst->SetRemoveTag(true);
+              if (overlap_count > 0)
+                sst->SetRemoveTag(true);
               continue;
             }
             inputs.push_back(sst);
@@ -458,8 +470,15 @@ void DBImpl::CompactionThread() {
     // size_t new_count = new_sv->count_keys();
     // if (new_count != old_count)
     //   std::cout << "old count: " << old_count << " new count: " << new_count << " src_level: " << compaction->src_level() << " target_level: " << compaction->target_level() << " input size: " << compaction->input_ssts().size() << " overlap: " << overlap_count << std::endl;
+    for (auto& sst: compaction->input_ssts()) {
+      sst->SetCompactionInProcess(false);
+    }
+    if (compaction->target_sorted_run()) {
+      for (auto& sst: compaction->target_sorted_run()->GetSSTs()) {
+        sst->SetCompactionInProcess(false);
+      }
+    }
     InstallSV(new_sv);
-    db_mutex_.unlock();
   }
 }
 

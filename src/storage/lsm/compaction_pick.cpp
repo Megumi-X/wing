@@ -1,4 +1,5 @@
 #include "storage/lsm/compaction_pick.hpp"
+#include <cmath>
 
 namespace wing {
 
@@ -7,19 +8,21 @@ namespace lsm {
 std::unique_ptr<Compaction> LeveledCompactionPicker::Get(Version* version) {
   std::vector<Level> levels = version->GetLevels();
   if (levels.size() == 0) return nullptr; 
-  for (int i = 1; i < levels.size(); i++) {
+  for (int i = levels.size() - 1; i >= 1; i--) {
     if (levels[i].size() > base_level_size_ * std::pow(ratio_, i - 1)) {
       auto input_runs = levels[i].GetRuns();
       if (i == levels.size() - 1 || levels[i + 1].GetRuns().size() == 0 ||
          levels[i + 1].GetRuns()[0]->GetSSTs().size() == 0 || levels[i + 1].GetRuns()[0]->GetSSTs()[0] == nullptr) {
         std::vector<std::shared_ptr<SSTable>> input_tables;
         input_tables.insert(input_tables.end(), levels[i].GetRuns()[0]->GetSSTs().begin(), levels[i].GetRuns()[0]->GetSSTs().end());
+        // input_tables.push_back(levels[i].GetRuns()[0]->GetSSTs()[0]);
         return std::make_unique<Compaction>(input_tables, input_runs, i, i + 1, nullptr, true);
       }
       auto target_runs = levels[i + 1].GetRuns();
       std::vector<std::shared_ptr<SSTable>> input_tables;
       int smallest_overlap = std::numeric_limits<int>::max();
       std::shared_ptr<SSTable> smallest_overlap_sst = input_runs[0]->GetSSTs()[0];
+      size_t cursor = 0;
       for (auto& sst : input_runs[0]->GetSSTs()) {
         if (sst->GetLargestKey().user_key_ < target_runs[0]->GetSmallestKey().user_key_ || sst->GetSmallestKey().user_key_ > target_runs[0]->GetLargestKey().user_key_){
           smallest_overlap_sst = std::shared_ptr<SSTable>(sst);
@@ -27,19 +30,16 @@ std::unique_ptr<Compaction> LeveledCompactionPicker::Get(Version* version) {
           break;
         }
         int overlap_count = 0;
-        for (auto& target_sst : target_runs[0]->GetSSTs()) {
-          if (sst->GetLargestKey().user_key_ < target_sst->GetSmallestKey().user_key_) {
+        for (int i = cursor; i < target_runs[0]->GetSSTs().size(); i++) {
+          if (sst->GetSmallestKey().user_key_ > target_runs[0]->GetSSTs()[i]->GetLargestKey().user_key_) {
+            cursor++;
             continue;
-          } else if (sst->GetSmallestKey().user_key_ > target_sst->GetLargestKey().user_key_) {
+          } else if (sst->GetLargestKey().user_key_ < target_runs[0]->GetSSTs()[i]->GetSmallestKey().user_key_) {
             break;
           }
           overlap_count++;
         }
-        if (overlap_count <= 1) {
-          smallest_overlap = overlap_count;
-          smallest_overlap_sst = std::shared_ptr<SSTable>(sst);
-          break;
-        }
+        // DB_INFO("{}, {}", cursor, overlap_count);
         if (overlap_count < smallest_overlap) {
           smallest_overlap = overlap_count;
           smallest_overlap_sst = std::shared_ptr<SSTable>(sst);

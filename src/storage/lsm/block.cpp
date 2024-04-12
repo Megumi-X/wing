@@ -14,16 +14,17 @@ bool BlockBuilder::Append(ParsedKey key, Slice value) {
   offsets_.push_back(offset_);
   offset_ += append_size - sizeof(offset_t);
   file_->AppendValue<offset_t>(key_length);
-  file_->AppendString(InternalKey(key).GetSlice());
+  auto ikey = InternalKey(key);
+  file_->AppendString(ikey.GetSlice());
   file_->AppendValue<offset_t>(value_length);
   file_->AppendString(value);
   current_size_ += append_size;
   if (offsets_.size() <= 1 || ParsedKey(largest_key) < key){
-    largest_key = InternalKey(key);
+    largest_key = std::move(ikey);
   } 
-  if (offsets_.size() <= 1 || ParsedKey(largest_key) > key){
-    smallest_key = InternalKey(key);
-  }
+  // if (offsets_.size() <= 1 || ParsedKey(smallest_key) > key){
+  //   smallest_key = ikey;
+  // }
   // file_->Flush();
   return true;
 }
@@ -32,7 +33,7 @@ void BlockBuilder::Finish() {
   for (auto offset : offsets_) {
     file_->AppendValue<offset_t>(offset);
   }
-  file_->Flush();
+  // file_->Flush();
 }
 
 void BlockIterator::Seek(Slice user_key, seq_t seq) {
