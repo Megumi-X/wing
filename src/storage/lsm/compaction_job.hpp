@@ -35,7 +35,7 @@ class CompactionJob {
     while (it.Valid()){
       // count10++;
       auto pkey = ParsedKey(it.key());
-      auto current_user_key = pkey.user_key_;
+      std::string current_user_key = std::string(pkey.user_key_);
       seq_t current_seq = pkey.seq_;
       if (current_user_key == last_user_key && current_seq < last_seq) {
         it.Next();

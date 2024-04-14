@@ -9,7 +9,7 @@ std::unique_ptr<Compaction> LeveledCompactionPicker::Get(Version* version) {
   std::vector<Level> levels = version->GetLevels();
   if (levels.size() == 0) return nullptr; 
   for (int i = levels.size() - 1; i >= 1; i--) {
-    if (levels[i].size() > base_level_size_ * std::pow(ratio_, i - 1)) {
+    if (levels[i].size() > base_level_size_ * std::pow(ratio_, i)) {
       auto input_runs = levels[i].GetRuns();
       if (i == levels.size() - 1 || levels[i + 1].GetRuns().size() == 0 ||
          levels[i + 1].GetRuns()[0]->GetSSTs().size() == 0 || levels[i + 1].GetRuns()[0]->GetSSTs()[0] == nullptr) {
