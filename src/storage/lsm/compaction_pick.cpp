@@ -75,7 +75,41 @@ std::unique_ptr<Compaction> FluidCompactionPicker::Get(Version* version) {
 
 std::unique_ptr<Compaction> LazyLevelingCompactionPicker::Get(
     Version* version) {
-  DB_ERR("Not implemented!");
+  std::vector<Level> levels = version->GetLevels();
+  if (levels.size() == 0) return nullptr;
+  if (levels.size() == 1) {
+    std::vector<std::shared_ptr<SortedRun>> input_runs;
+    input_runs.push_back(levels.back().GetRuns()[0]);
+    std::vector<std::shared_ptr<SSTable>> input_tables = input_runs[0]->GetSSTs();
+    return std::make_unique<Compaction>(input_tables, input_runs, levels.size() - 1, levels.size(), nullptr, true, "lazy");
+  }
+  if (levels.back().size() >= std::pow(ratio_, levels.size() - 1) * base_level_size_) {
+    std::vector<std::shared_ptr<SortedRun>> input_runs;
+    input_runs.push_back(levels.back().GetRuns()[0]);
+    std::vector<std::shared_ptr<SSTable>> input_tables = input_runs[0]->GetSSTs();
+    return std::make_unique<Compaction>(input_tables, input_runs, levels.size() - 1, levels.size(), nullptr, true, "lazy");
+  }
+  if (levels.size() >= 3) {
+    for (int i = 0; i <= levels.size() - 3; i++) {
+      if (levels[i].GetRuns().size() >= ratio_) {
+        auto input_runs = levels[i].GetRuns();
+        std::vector<std::shared_ptr<SSTable>> input_tables;
+        for (auto& run : input_runs) {
+          input_tables.insert(input_tables.end(), run->GetSSTs().begin(), run->GetSSTs().end());
+        }
+        return std::make_unique<Compaction>(input_tables, input_runs, i, i + 1, nullptr, false, "lazy");
+      }
+    }
+  }
+  if (levels.size() >= 2 && levels[levels.size() - 2].GetRuns().size() >= ratio_) {
+    auto input_runs = levels[levels.size() - 2].GetRuns();
+    std::vector<std::shared_ptr<SSTable>> input_tables;
+    for (auto& run : input_runs) {
+      input_tables.insert(input_tables.end(), run->GetSSTs().begin(), run->GetSSTs().end());
+    }
+    return std::make_unique<Compaction>(input_tables, input_runs, levels.size() - 2, levels.size() - 1, levels.back().GetRuns()[0], false, "lazy");
+  }
+  return nullptr;
 }
 
 }  // namespace lsm

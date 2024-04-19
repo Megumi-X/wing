@@ -12,13 +12,14 @@ class Compaction {
   Compaction(std::vector<std::shared_ptr<SSTable>> input_ssts,
       std::vector<std::shared_ptr<SortedRun>> input_runs, int src_level,
       int target_level, std::shared_ptr<SortedRun> target_sorted_run,
-      bool is_trivial_move)
+      bool is_trivial_move, std::string type = "level")
     : input_ssts_(std::move(input_ssts)),
       input_runs_(std::move(input_runs)),
       src_level_(src_level),
       target_level_(target_level),
       target_sorted_run_(target_sorted_run),
-      is_trivial_move_(is_trivial_move) {}
+      is_trivial_move_(is_trivial_move),
+      type(type) {}
 
   std::shared_ptr<SortedRun> target_sorted_run() const {
     return target_sorted_run_;
@@ -35,6 +36,10 @@ class Compaction {
   int target_level() const { return target_level_; }
 
   int src_level() const { return src_level_; }
+
+  bool trivial_move() const { return is_trivial_move_; }
+
+  std::string type;
 
  private:
   /* The input SSTables */
