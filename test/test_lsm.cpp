@@ -569,17 +569,15 @@ TEST(LSMTest, CompactionBasicTest) {
       }
     }
 
-    Slice key() {
-      return key_.GetSlice();
-    }
+    Slice key() { return key_.GetSlice(); }
 
     Slice value() {
       current_v_ = kv_[id_].value();
       return current_v_;
     }
 
-    void Next() { 
-      id_ += 1; 
+    void Next() {
+      id_ += 1;
       if (Valid()) {
         key_ = InternalKey(kv_[id_].key(), seq_, type_);
       }
@@ -1256,4 +1254,218 @@ TEST(LSMTest, TieredCompactionTest) {
   std::filesystem::remove_all(options.db_path);
 }
 
-TEST(LSMTest, Benchmark1) {}
+void CorrectnessCheck(
+    std::vector<CompressedKVPair>& kv, wing::lsm::DBImpl* lsm) {
+  auto it = lsm->Begin();
+  std::sort(kv.begin(), kv.end());
+  for (uint32_t i = 0; i < kv.size(); i++) {
+    ASSERT_TRUE(it.Valid());
+    ASSERT_EQ(it.key(), kv[i].key());
+    ASSERT_EQ(it.value(), kv[i].value());
+    it.Next();
+  }
+  ASSERT_FALSE(it.Valid());
+}
+
+TEST(LSMTest, LazyLevelingCompactionTest) {
+  Options options;
+  options.sst_file_size = 1 << 20;
+  options.compaction_size_ratio = 8;
+  options.max_immutable_count = 20;
+  options.level0_compaction_trigger = 10;
+  options.level0_stop_writes_trigger = 20;
+  options.compaction_strategy_name = "lazyleveling";
+  options.db_path = "__tmpLazyLevelingCompactionTest/";
+  std::filesystem::remove_all(options.db_path);
+  std::filesystem::create_directories(options.db_path);
+  auto lsm = DBImpl::Create(options);
+  GetStatsContext()->Reset();
+
+  uint32_t klen = 10, vlen = 514, N = 5e6;
+  auto kv =
+      GenKVDataWithRandomLen(0x202403282311, N, {klen - 1, klen}, {1, vlen});
+
+  // Check the number of sorted runs at each level
+  auto check = [&]() {
+    auto sv = lsm->GetSV();
+    auto version = sv->GetVersion();
+    auto level_size_limit =
+        options.level0_compaction_trigger * options.sst_file_size;
+    ASSERT_TRUE(version->GetLevels().back().GetRuns().size() == 1);
+    ASSERT_TRUE(version->GetLevels().size() <= 4);
+    for (auto& level : version->GetLevels()) {
+      if (level.GetID() == 0) {
+        ASSERT_TRUE(
+            level.GetRuns().size() <= options.level0_stop_writes_trigger);
+      } else {
+        ASSERT_TRUE(level.GetRuns().size() <= options.compaction_size_ratio);
+      }
+      size_t level_size = 0;
+      for (auto& sr : level.GetRuns()) {
+        for (auto& sst : sr->GetSSTs()) {
+          level_size += sst->GetSSTInfo().size_;
+        }
+      }
+      ASSERT_TRUE(level_size <= level_size_limit);
+      level_size_limit *= options.compaction_size_ratio;
+    }
+  };
+  /* Insert all key-value pairs into LSM tree */
+  wing::StopWatch sw;
+  wing::wing_testing::TestTimeout(
+      [&]() {
+        for (uint32_t T = 0; T < 20; T++) {
+          uint32_t L = (N / 20) * T;
+          uint32_t R = std::min((N / 20) * (T + 1), N);
+          for (uint32_t i = L; i < R; i++) {
+            lsm->Put(kv[i].key(), kv[i].value());
+          }
+          lsm->WaitForFlushAndCompaction();
+          check();
+        }
+        lsm->FlushAll();
+        lsm->WaitForFlushAndCompaction();
+      },
+      60000, "Your compaction is too slow!");
+  DB_INFO("Put Cost {}s.", sw.GetTimeInSeconds());
+  CorrectnessCheck(kv, lsm.get());
+  ASSERT_TRUE(SanityCheck(lsm.get()));
+  lsm.reset();
+  auto wa = GetStatsContext()->total_write_bytes.load() /
+            (double)GetStatsContext()->total_input_bytes.load();
+  DB_INFO("Write amplification: {}", wa);
+  ASSERT_TRUE(wa <= 7);
+  std::filesystem::remove_all(options.db_path);
+}
+
+/* Return read (scan) cost and write cost */
+std::pair<double, double> Part3Benchmark(
+    double alpha, uint32_t N, size_t scan_length) {
+  Options options;
+  options.sst_file_size = 1 << 20;
+  options.max_immutable_count = 20;
+  options.compaction_size_ratio = 8;
+  options.level0_stop_writes_trigger = 20;
+  options.compaction_strategy_name = "fluid";
+  options.db_path = "__tmpPart3BenchmarkTest/";
+  options.target_scan_length_part3 = scan_length;
+  options.target_alpha_part3 = alpha;
+  std::filesystem::remove_all(options.db_path);
+  std::filesystem::create_directories(options.db_path);
+  auto lsm = DBImpl::Create(options);
+  GetStatsContext()->Reset();
+
+  double scan_cost = 0;
+  uint32_t klen = 20, vlen = 514;
+  auto kv =
+      GenKVDataWithRandomLen(0x202404151057, N, {klen - 1, klen}, {1, vlen});
+  auto sorted_kv = decltype(kv)();
+  std::mt19937_64 rgen(0x202404151117);
+
+  double estimate_scan_cost = 0;
+  double estimate_scan_cost2 = 0;
+
+  for (uint32_t T = 0; T < 10; T++) {
+    uint32_t L = N / 10 * T, R = std::min(N / 10 * (T + 1), N);
+    for (uint32_t i = L; i < R; i++) {
+      lsm->Put(kv[i].key(), kv[i].value());
+    }
+    lsm->FlushAll();
+    lsm->WaitForFlushAndCompaction();
+    sorted_kv.insert(sorted_kv.end(), kv.begin() + L, kv.begin() + R);
+    std::sort(sorted_kv.begin(), sorted_kv.end());
+    for (uint32_t i = 0; i < sorted_kv.size() / 500; i++) {
+      int slen =
+          sorted_kv.size() <= scan_length ? sorted_kv.size() : scan_length;
+      int id =
+          std::uniform_int_distribution<>(0, sorted_kv.size() - slen)(rgen);
+
+      auto sv = lsm->GetSV();
+      auto version = sv->GetVersion();
+      double num_access = 0;
+      for (auto& level : version->GetLevels()) {
+        for (auto& sr : level.GetRuns()) {
+          auto it = sr->Seek(sorted_kv[id].key(), lsm->CurrentSeq());
+          num_access += it.Valid() && ParsedKey(it.key()).user_key_ <=
+                                          sorted_kv[id + slen - 1].key();
+        }
+      }
+      scan_cost += num_access / options.sst_file_size * options.block_size * 50;
+    }
+    {
+      auto sv = lsm->GetSV();
+      auto version = sv->GetVersion();
+      double total_size = 0;
+      for (auto& level : version->GetLevels()) {
+        for (auto& sr : level.GetRuns()) {
+          total_size += sr->size();
+        }
+      }
+      for (auto& level : version->GetLevels()) {
+        for (auto& sr : level.GetRuns()) {
+          estimate_scan_cost +=
+              (1 - exp(-(double)sr->size() / total_size * scan_length)) /
+              options.sst_file_size * options.block_size * sorted_kv.size() /
+              10;
+          estimate_scan_cost2 +=
+              (1 - pow(1 - (double)sr->size() / total_size, scan_length)) /
+              options.sst_file_size * options.block_size * sorted_kv.size() /
+              10;
+        }
+      }
+    }
+  }
+
+  CorrectnessCheck(kv, lsm.get());
+  SanityCheck(lsm.get());
+  DB_INFO("estimate {}, {}", estimate_scan_cost, estimate_scan_cost2);
+  double write_cost =
+      GetStatsContext()->total_write_bytes.load() / options.sst_file_size;
+  return {scan_cost, write_cost};
+}
+
+TEST(LSMTest, Part3Benchmark2) {
+  std::vector<std::pair<double, double>> costs;
+  std::vector<double> alpha = {1, 0.5, 0.2, 0.05};
+  std::vector<double> baseline = {40000, 28000, 20000, 9000};
+  for (uint32_t i = 0; i < alpha.size(); i++) {
+    auto [read_cost, write_cost] = Part3Benchmark(alpha[i], 5e6, 100);
+    DB_INFO("Read cost: {}, write cost: {}, Total: {}", read_cost, write_cost,
+        read_cost * alpha[i] + write_cost);
+    costs.emplace_back(read_cost, write_cost);
+  }
+
+  for (uint32_t i = 0; i < costs.size(); i++) {
+    auto [read_cost, write_cost] = costs[i];
+    DB_INFO("Read cost: {}, write cost: {}, Total: {}", read_cost, write_cost,
+        read_cost * alpha[i] + write_cost);
+  }
+
+  for (uint32_t i = 0; i < costs.size(); i++) {
+    auto [read_cost, write_cost] = costs[i];
+    ASSERT_TRUE(read_cost * alpha[i] + write_cost <= baseline[i]);
+  }
+}
+
+TEST(LSMTest, Part3Benchmark1) {
+  std::vector<std::pair<double, double>> costs;
+  std::vector<double> alpha = {1, 0.5, 0.2, 0.05};
+  std::vector<double> baseline = {45000, 35000, 25000, 12000};
+  for (uint32_t i = 0; i < alpha.size(); i++) {
+    auto [read_cost, write_cost] = Part3Benchmark(alpha[i], 5e6, 1e9);
+    DB_INFO("Read cost: {}, write cost: {}, Total: {}", read_cost, write_cost,
+        read_cost * alpha[i] + write_cost);
+    costs.emplace_back(read_cost, write_cost);
+  }
+
+  for (uint32_t i = 0; i < costs.size(); i++) {
+    auto [read_cost, write_cost] = costs[i];
+    DB_INFO("Read cost: {}, write cost: {}, Total: {}", read_cost, write_cost,
+        read_cost * alpha[i] + write_cost);
+  }
+
+  for (uint32_t i = 0; i < costs.size(); i++) {
+    auto [read_cost, write_cost] = costs[i];
+    ASSERT_TRUE(read_cost * alpha[i] + write_cost <= baseline[i]);
+  }
+}
