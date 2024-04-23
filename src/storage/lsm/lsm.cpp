@@ -400,7 +400,7 @@ void DBImpl::CompactionThread() {
     // std::cout << "count1: " << count1 << " count2: " << count2 << std::endl;
     db_mutex_.lock();
     // Create a new superversion and install it
-    size_t old_count = sv_->count_keys();
+    // size_t old_count = sv_->count_keys();
     std::shared_ptr<Version> new_version = std::make_shared<Version>();
     size_t src_level_index = compaction->src_level();
     size_t target_level_index = compaction->target_level();
@@ -574,9 +574,9 @@ void DBImpl::CompactionThread() {
       }
     }
     std::shared_ptr<SuperVersion> new_sv = std::make_shared<SuperVersion>(sv_->GetMt(), sv_->GetImms(), new_version);
-    size_t new_count = new_sv->count_keys();
-    if (new_count != old_count)
-      std::cerr << "old count: " << old_count << " new count: " << new_count << " src_level: " << compaction->src_level() << " target_level: " << compaction->target_level() << " input size: " << compaction->input_ssts().size() << " overlap: " << overlap_count << std::endl;
+    // size_t new_count = new_sv->count_keys();
+    // if (new_count != old_count)
+    //   std::cerr << "old count: " << old_count << " new count: " << new_count << " src_level: " << compaction->src_level() << " target_level: " << compaction->target_level() << " input size: " << compaction->input_ssts().size() << " overlap: " << overlap_count << std::endl;
     for (auto& sst: compaction->input_ssts()) {
       sst->SetCompactionInProcess(false);
     }

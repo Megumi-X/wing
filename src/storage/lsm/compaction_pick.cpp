@@ -70,7 +70,48 @@ std::unique_ptr<Compaction> TieredCompactionPicker::Get(Version* version) {
 }
 
 std::unique_ptr<Compaction> FluidCompactionPicker::Get(Version* version) {
-  DB_ERR("Not implemented!");
+  std::vector<Level> levels = version->GetLevels();
+  if (levels.size() == 0) return nullptr;
+  if (levels.size() == 1) {
+    std::vector<std::shared_ptr<SortedRun>> input_runs;
+    input_runs.push_back(levels.back().GetRuns()[0]);
+    std::vector<std::shared_ptr<SSTable>> input_tables = input_runs[0]->GetSSTs();
+    return std::make_unique<Compaction>(input_tables, input_runs, levels.size() - 1, levels.size(), nullptr, true, "lazy");
+  }
+  while (k_i.size() != levels.size() - 1) {
+    k_i.push_back(std::max(size_t(8) - 2 * k_i.size(), size_t(2)));
+  }
+  size_t last_size = base_level_size_ * ratio_;
+  for (size_t i = 1; i < k_i.size(); i++){
+    last_size *= k_i[i];
+  }
+  if (levels.back().size() >= last_size) {
+    std::vector<std::shared_ptr<SortedRun>> input_runs;
+    input_runs.push_back(levels.back().GetRuns()[0]);
+    std::vector<std::shared_ptr<SSTable>> input_tables = input_runs[0]->GetSSTs();
+    return std::make_unique<Compaction>(input_tables, input_runs, levels.size() - 1, levels.size(), nullptr, true, "lazy");
+  }
+  if (levels.size() >= 3) {
+    for (int i = 0; i <= levels.size() - 3; i++) {
+      if (levels[i].GetRuns().size() >= k_i[i]) {
+        auto input_runs = levels[i].GetRuns();
+        std::vector<std::shared_ptr<SSTable>> input_tables;
+        for (auto& run : input_runs) {
+          input_tables.insert(input_tables.end(), run->GetSSTs().begin(), run->GetSSTs().end());
+        }
+        return std::make_unique<Compaction>(input_tables, input_runs, i, i + 1, nullptr, false, "lazy");
+      }
+    }
+  }
+  if (levels.size() >= 2 && levels[levels.size() - 2].GetRuns().size() >= k_i[levels.size() - 2]) {
+    auto input_runs = levels[levels.size() - 2].GetRuns();
+    std::vector<std::shared_ptr<SSTable>> input_tables;
+    for (auto& run : input_runs) {
+      input_tables.insert(input_tables.end(), run->GetSSTs().begin(), run->GetSSTs().end());
+    }
+    return std::make_unique<Compaction>(input_tables, input_runs, levels.size() - 2, levels.size() - 1, levels.back().GetRuns()[0], false, "lazy");
+  }
+  return nullptr;
 }
 
 std::unique_ptr<Compaction> LazyLevelingCompactionPicker::Get(

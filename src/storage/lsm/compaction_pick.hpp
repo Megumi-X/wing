@@ -3,6 +3,7 @@
 #include "storage/lsm/compaction.hpp"
 #include "storage/lsm/sst.hpp"
 #include "storage/lsm/version.hpp"
+#include "common/stopwatch.hpp"
 
 namespace wing {
 
@@ -92,6 +93,8 @@ class FluidCompactionPicker final : public CompactionPicker {
   size_t base_level_size_{0};
   /* The maximum amount of sorted runs in Level 0 */
   size_t level0_compaction_trigger_{0};
+  size_t ratio_ = std::max(4.5 * (1 - (1 - alpha_) * 0.5), 1.);
+  std::vector<size_t> k_i {level0_compaction_trigger_};
 };
 
 }  // namespace lsm
