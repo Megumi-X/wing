@@ -78,11 +78,11 @@ std::unique_ptr<Compaction> FluidCompactionPicker::Get(Version* version) {
     std::vector<std::shared_ptr<SSTable>> input_tables = input_runs[0]->GetSSTs();
     return std::make_unique<Compaction>(input_tables, input_runs, levels.size() - 1, levels.size(), nullptr, true, "lazy");
   }
-  while (k_i.size() != levels.size() - 1) {
-    k_i.push_back(std::max(size_t(8) - 2 * k_i.size(), size_t(2)));
+  while (k_i.size() < levels.size() - 1) {
+    k_i.push_back(2);
   }
   size_t last_size = base_level_size_ * ratio_;
-  for (size_t i = 1; i < k_i.size(); i++){
+  for (size_t i = 1; i < levels.size() - 1; i++){
     last_size *= k_i[i];
   }
   if (levels.back().size() >= last_size) {

@@ -93,8 +93,8 @@ class FluidCompactionPicker final : public CompactionPicker {
   size_t base_level_size_{0};
   /* The maximum amount of sorted runs in Level 0 */
   size_t level0_compaction_trigger_{0};
-  size_t ratio_ = std::max(4.5 * (1 - (1 - alpha_) * 0.5), 1.);
-  std::vector<size_t> k_i {level0_compaction_trigger_};
+  double ratio_ = std::max(4 * (1 - (1 - alpha_) * 0.2), 1.);
+  std::vector<size_t> k_i {level0_compaction_trigger_, 6, 4, 2, 2, 2, 2};
 };
 
 }  // namespace lsm
