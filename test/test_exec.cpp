@@ -9,7 +9,7 @@
 TEST(ExecutorJoinTest, JoinTestNum10Table2) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0100");
+  std::filesystem::remove_all("__tmp0100");
   auto db = std::make_unique<wing::Instance>("__tmp0100", wing_test_options);
 
   // Do joins on values.
@@ -282,16 +282,16 @@ TEST(ExecutorJoinTest, JoinTestNum10Table2) {
   }
 
   db = nullptr;
-  std::filesystem::remove("__tmp0100");
+  std::filesystem::remove_all("__tmp0100");
 }
 
 TEST(ExecutorJoinTest, JoinTestNum3e3Table2) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0101");
+  std::filesystem::remove_all("__tmp0101");
   auto db = std::make_unique<wing::Instance>("__tmp0101", wing_test_options);
-  auto NUM = 3e3;
-  // Two countries have 3e3 ports. Ports have three attributes: name, position,
+  auto NUM = 5e3;
+  // Two countries have 1e4 ports. Ports have three attributes: name, position,
   // cost, time. Alice wants to find the shortest path from Country A to Country
   // B within the given cost. But we don't have aggregate operators, so she only
   // lists those paths. Cost: c_0 * ||position_0 - position_1|| ^ 2 + cost_0 +
@@ -315,14 +315,19 @@ TEST(ExecutorJoinTest, JoinTestNum3e3Table2) {
   ASSERT_TRUE(db->Execute("insert into countryB " + stmt_b + ";").Valid());
   double c0 = 20, t0 = 5, lim_cost = 700;
   StopWatch sw;
-  auto result = db->Execute(
-      fmt::format("select A.name, B.name, "
-                  "((A.px-B.px)*(A.px-B.px)+(A.py-B.py)*(A.py-B.py)+(A.pz-B.pz)"
-                  "*(A.pz-B.pz)) / {} + A.t + B.t from countryA "
-                  "as A, countryB as B where  "
-                  "((A.px-B.px)*(A.px-B.px)+(A.py-B.py)*(A.py-B.py)+(A.pz-B.pz)"
-                  "*(A.pz-B.pz)) * {} + A.cost + B.cost < {};",
-          t0, c0, lim_cost));
+  ResultSet result;
+  TestTimeout(
+      [&]() {
+        result = db->Execute(fmt::format(
+            "select A.name, B.name, "
+            "((A.px-B.px)*(A.px-B.px)+(A.py-B.py)*(A.py-B.py)+(A.pz-B.pz)"
+            "*(A.pz-B.pz)) / {} + A.t + B.t from countryA "
+            "as A, countryB as B where  "
+            "((A.px-B.px)*(A.px-B.px)+(A.py-B.py)*(A.py-B.py)+(A.pz-B.pz)"
+            "*(A.pz-B.pz)) * {} + A.cost + B.cost < {};",
+            t0, c0, lim_cost));
+      },
+      2000, "Your join is too slow!");
   DB_INFO("Use: {} s", sw.GetTimeInSeconds());
   ASSERT_TRUE(result.Valid());
   SortedVec<std::string, PVec> answer;
@@ -361,13 +366,13 @@ TEST(ExecutorJoinTest, JoinTestNum3e3Table2) {
       fmt::format("{}_{}", tuple.ReadString(0), tuple.ReadString(1)), 3);
 
   db = nullptr;
-  std::filesystem::remove("__tmp0101");
+  std::filesystem::remove_all("__tmp0101");
 }
 
 TEST(ExecutorJoinTest, JoinTestTable3) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0102");
+  std::filesystem::remove_all("__tmp0102");
   auto db = std::make_unique<wing::Instance>("__tmp0102", wing_test_options);
   // Two databases have some users and their id, now give the relations between
   // the two user groups, print the corresponding username.
@@ -420,7 +425,7 @@ TEST(ExecutorJoinTest, JoinTestTable3) {
           result = db->Execute(
               "select * from dupA as A join dupB as B on A.a = B.a + 10;");
         },
-        5000);
+        3000);
     DB_INFO("Use: {} s", sw.GetTimeInSeconds());
   }
 
@@ -461,7 +466,7 @@ TEST(ExecutorJoinTest, JoinTestTable3) {
               "A.value - B.value < {} and A.value - B.value > {};",
               v0, -v0));
         },
-        5000);
+        3000);
     DB_INFO("Use: {} s", sw.GetTimeInSeconds());
     SortedVec<uint32_t, PVec> A;
     SortedVec<uint32_t, PVec> B;
@@ -492,13 +497,13 @@ TEST(ExecutorJoinTest, JoinTestTable3) {
   }
 
   db = nullptr;
-  std::filesystem::remove("__tmp0102");
+  std::filesystem::remove_all("__tmp0102");
 }
 
 TEST(ExecutorJoinTest, JoinTestTableN) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0106");
+  std::filesystem::remove_all("__tmp0106");
   auto db = std::make_unique<wing::Instance>("__tmp0106", wing_test_options);
   {
     auto result = db->Execute(
@@ -541,11 +546,11 @@ TEST(ExecutorJoinTest, JoinTestTableN) {
     ASSERT_TRUE(db->Execute("create table CompanyC(id int32 auto_increment primary key, c_id int32 foreign key references C(id), company_id int32 foreign key references Company(id));").Valid());
     ASSERT_TRUE(db->Execute("create table Employees(id int32 auto_increment primary key, company_id int32 foreign key references Company(id), d_id int32 foreign key references D(id));").Valid());
     // clang-format on
-    int NUM = 100;    // A, B, C size
-    int DNUM = 1e3;   // D, E size
-    int FNUM = 6000;  // FollowsAB, FollowsBC size
-    int CNUM = 80;    // Company number.
-    int CONUM = 200;  // Company owner number.
+    int NUM = 1300;    // A, B, C size
+    int DNUM = 2e3;    // D, E size
+    int FNUM = 6000;   // FollowsAB, FollowsBC size
+    int CNUM = 80;     // Company number.
+    int CONUM = 2000;  // Company owner number.
     RandomTupleGen tuple_gen(118900);
     tuple_gen.AddString(5, 5).AddInt(0, 0).AddString(15, 20);
     auto [stmt_a, data_a] = tuple_gen.GenerateValuesClause(NUM);
@@ -653,13 +658,13 @@ TEST(ExecutorJoinTest, JoinTestTableN) {
     ASSERT_EQ(sz, ssz);
   }
   db = nullptr;
-  std::filesystem::remove("__tmp0106");
+  std::filesystem::remove_all("__tmp0106");
 }
 
 TEST(ExecutorAggregateTest, SmallAggregateTest) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0103");
+  std::filesystem::remove_all("__tmp0103");
   auto db = std::make_unique<wing::Instance>("__tmp0103", wing_test_options);
   {
     auto result = db->Execute(
@@ -859,13 +864,13 @@ TEST(ExecutorAggregateTest, SmallAggregateTest) {
     }
   }
   db = nullptr;
-  std::filesystem::remove("__tmp0103");
+  std::filesystem::remove_all("__tmp0103");
 }
 
 TEST(ExecutorAggregateTest, PolyAggregateTest) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0104");
+  std::filesystem::remove_all("__tmp0104");
   auto db = std::make_unique<wing::Instance>("__tmp0104", wing_test_options);
   // Now we can use our executors to calculate polynomial multiplication!
   // We want to calculate A * B * B, where A is of degree 3000, B is of degree
@@ -948,13 +953,13 @@ TEST(ExecutorAggregateTest, PolyAggregateTest) {
     delete[] D;
   }
   db = nullptr;
-  std::filesystem::remove("__tmp0104");
+  std::filesystem::remove_all("__tmp0104");
 }
 
 TEST(ExecutorAggregateTest, StringAggregateTest) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0105");
+  std::filesystem::remove_all("__tmp0105");
   auto db = std::make_unique<wing::Instance>("__tmp0105", wing_test_options);
   {
     ASSERT_TRUE(
@@ -1013,13 +1018,13 @@ TEST(ExecutorAggregateTest, StringAggregateTest) {
     CHECK_ALL_ANS(answer, result, std::string(tuple.ReadString(0)), 3);
   }
   db = nullptr;
-  std::filesystem::remove("__tmp0105");
+  std::filesystem::remove_all("__tmp0105");
 }
 
 TEST(ExecutorOrderByTest, SmallTest) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0107");
+  std::filesystem::remove_all("__tmp0107");
   auto db = std::make_unique<wing::Instance>("__tmp0107", wing_test_options);
   {
     // clang-format off
@@ -1053,13 +1058,13 @@ TEST(ExecutorOrderByTest, SmallTest) {
     ASSERT_FALSE(result.Next());
   }
   db = nullptr;
-  std::filesystem::remove("__tmp0107");
+  std::filesystem::remove_all("__tmp0107");
 }
 
 TEST(ExecutorOrderByTest, BigTest) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0113");
+  std::filesystem::remove_all("__tmp0113");
   auto db = std::make_unique<wing::Instance>("__tmp0113", wing_test_options);
   // A student called Alice wants to do her C++ homework, quicksort.
   // She needs a magical mirror that reflects the correct answer.
@@ -1178,13 +1183,13 @@ TEST(ExecutorOrderByTest, BigTest) {
     }
   }
   db = nullptr;
-  std::filesystem::remove("__tmp0113");
+  std::filesystem::remove_all("__tmp0113");
 }
 
 TEST(ExecutorLimitTest, SmallTest) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0108");
+  std::filesystem::remove_all("__tmp0108");
   auto db = std::make_unique<wing::Instance>("__tmp0108", wing_test_options);
   // empty query
   {
@@ -1214,13 +1219,13 @@ TEST(ExecutorLimitTest, SmallTest) {
     CHECK_ALL_SORTED_ANS(answer, result, 1);
   }
   db = nullptr;
-  std::filesystem::remove("__tmp0108");
+  std::filesystem::remove_all("__tmp0108");
 }
 
 TEST(ExecutorLimitTest, BigTest) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0114");
+  std::filesystem::remove_all("__tmp0114");
   auto db = std::make_unique<wing::Instance>("__tmp0114", wing_test_options);
   // Solve the equation -x^3 + 17x + 1 = 0.
   {
@@ -1248,13 +1253,13 @@ TEST(ExecutorLimitTest, BigTest) {
     ASSERT_FALSE(result.Next());
   }
   db = nullptr;
-  std::filesystem::remove("__tmp0114");
+  std::filesystem::remove_all("__tmp0114");
 }
 
 TEST(ExecutorDistinctTest, SmallTest) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0109");
+  std::filesystem::remove_all("__tmp0109");
   auto db = std::make_unique<wing::Instance>("__tmp0109", wing_test_options);
   // empty return set
   {
@@ -1299,13 +1304,13 @@ TEST(ExecutorDistinctTest, SmallTest) {
     CHECK_ALL_SORTED_ANS(answer, result, 1);
   }
   db = nullptr;
-  std::filesystem::remove("__tmp0109");
+  std::filesystem::remove_all("__tmp0109");
 }
 
 TEST(ExecutorDistinctTest, BigTest) {
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0115");
+  std::filesystem::remove_all("__tmp0115");
   auto db = std::make_unique<wing::Instance>("__tmp0115", wing_test_options);
   // Get distinct code lines from a big code base.
   // Clearly there are many duplicate codes.
@@ -1377,14 +1382,14 @@ TEST(ExecutorDistinctTest, BigTest) {
     }
   }
   db = nullptr;
-  std::filesystem::remove("__tmp0115");
+  std::filesystem::remove_all("__tmp0115");
 }
 
 TEST(ExecutorAllTest, OJContestTest) {
   // In Lecture 2
   using namespace wing;
   using namespace wing::wing_testing;
-  std::filesystem::remove("__tmp0110");
+  std::filesystem::remove_all("__tmp0110");
   auto db = std::make_unique<wing::Instance>("__tmp0110", wing_test_options);
   // clang-format off
   ASSERT_TRUE(db->Execute("create table Contestant(id int32 auto_increment primary key, name varchar(8));").Valid());
@@ -1519,5 +1524,5 @@ TEST(ExecutorAllTest, OJContestTest) {
   }
 
   db = nullptr;
-  std::filesystem::remove("__tmp0110");
+  std::filesystem::remove_all("__tmp0110");
 }

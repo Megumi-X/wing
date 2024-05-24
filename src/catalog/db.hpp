@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "catalog/gen_pk.hpp"
+#include "catalog/options.hpp"
 #include "catalog/schema.hpp"
 #include "catalog/stat.hpp"
 #include "storage/storage.hpp"
@@ -13,7 +14,7 @@ namespace wing {
 
 class DB {
  public:
-  DB(std::string_view file_name);
+  DB(std::string_view file_name, WingOptions& options);
 
   ~DB();
 
@@ -83,6 +84,8 @@ class DB {
     return fmt::format("__default_primary_key_{}",
         std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
   }
+
+  const WingOptions& GetOptions() const;
 
  private:
   class Impl;
