@@ -466,7 +466,7 @@ TEST(ExecutorJoinTest, JoinTestTable3) {
               "A.value - B.value < {} and A.value - B.value > {};",
               v0, -v0));
         },
-        30000);
+        3000);
     DB_INFO("Use: {} s", sw.GetTimeInSeconds());
     SortedVec<uint32_t, PVec> A;
     SortedVec<uint32_t, PVec> B;

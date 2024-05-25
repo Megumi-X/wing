@@ -2,6 +2,7 @@
 
 #include "execution/executor.hpp"
 #include "common/murmurhash.hpp"
+#include "common/stopwatch.hpp"
 #include <iostream>
 
 namespace wing {
@@ -61,27 +62,25 @@ public:
 
     TupleBatch InternalNext() {
         TupleBatch ret;
-        size_t ret_size = 0;
         ret.Init(output_schema_.GetTypes(), max_batch_size_);
-        while (probe_tb_.size() > 0) {
+        while (probe_tb_.size() > 0) {    
             for (; probe_tb_idx_ < probe_tb_.size(); ++probe_tb_idx_) {
                 size_t i = probe_tb_idx_;
-                auto it = hash_table_.find(right_hash_vals_[i]);
-                if (it != hash_table_.end()) {
-                    for (; hash_table_idx_ < it->second.size(); ++hash_table_idx_) {
-                        size_t build_tb_idx = it->second[hash_table_idx_].first;
-                        size_t build_tuple_idx = it->second[hash_table_idx_].second;
+                if (hash_table_end_) {
+                    it_ = hash_table_.find(right_hash_vals_[i]);
+                    hash_table_end_ = false;
+                }
+                if (it_ != hash_table_.end()) {
+                    for (; hash_table_idx_ < it_->second.size(); ++hash_table_idx_) {
+                        size_t build_tb_idx = it_->second[hash_table_idx_].first;
+                        size_t build_tuple_idx = it_->second[hash_table_idx_].second;
                         TupleBatch& build_tb = build_tuples_[build_tb_idx];
-                        std::vector<Vector> input_vec;
+                        std::vector<Vector> input_vec(build_tb.GetCols().size() + probe_tb_.GetCols().size());
                         for (size_t j = 0; j < build_tb.GetCols().size(); ++j) {
-                            Vector vec(VectorType::Flat, build_tb.GetColElemTypes()[j], 1);
-                            vec.Set(0, build_tb.Get(build_tuple_idx, j));
-                            input_vec.push_back(vec);
+                            input_vec[j] = build_tb.GetCols()[j].Slice(build_tuple_idx, 1);
                         }
                         for (size_t j = 0; j < probe_tb_.GetCols().size(); ++j) {
-                            Vector vec(VectorType::Flat, probe_tb_.GetColElemTypes()[j], 1);
-                            vec.Set(0, probe_tb_.Get(i, j));
-                            input_vec.push_back(vec);
+                            input_vec[j + build_tb.GetCols().size()] = probe_tb_.GetCols()[j].Slice(i, 1);
                         }
                         expr_result_ = Vector(VectorType::Flat, LogicalType::INT, 1);
                         if (expr_.IsValid()) {
@@ -90,7 +89,6 @@ public:
                             expr_result_.Set(0, int64_t(1));
                         }
                         if (expr_result_.Get(0).ReadInt() != 0) {
-                            ++ret_size;
                             ret.Append(input_vec, 0);
                             if (ret.size() == max_batch_size_) {
                                 ++hash_table_idx_;
@@ -98,8 +96,9 @@ public:
                             }
                         }
                     }
-                    hash_table_idx_ = 0;          
+                    hash_table_idx_ = 0;       
                 }
+                hash_table_end_ = true; 
             }
             probe_tb_idx_ = 0;
             update_probe();
@@ -144,6 +143,8 @@ private:
     TupleBatch probe_tb_;
     size_t probe_tb_idx_{0};
     size_t hash_table_idx_{0};
+    bool hash_table_end_{true};
+    std::unordered_map<size_t, std::vector<std::pair<size_t, size_t>>>::iterator it_ = hash_table_.end();
 
     std::vector<Vector> right_hash_cols_;
     std::vector<size_t> right_hash_vals_;
