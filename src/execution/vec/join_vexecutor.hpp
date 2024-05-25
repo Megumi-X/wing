@@ -1,7 +1,6 @@
 #pragma once
 
 #include "execution/executor.hpp"
-#include <iostream>
 
 namespace wing {
 
@@ -49,15 +48,21 @@ public:
                 for (; build_single_tuple_idx_ < build_tuples_[build_tuple_idx_].size(); build_single_tuple_idx_++) {
                     size_t j = build_single_tuple_idx_;
                     TupleBatch tmp_tb;
-                    tmp_tb.Init(probe_tb_.GetColElemTypes(), probe_tb_.Capacity());
+                    tmp_tb.Init(build_tb.GetColElemTypes(), probe_tb_.Capacity());
                     for (size_t k = 0; k < probe_tb_.size(); k++) {
                         tmp_tb.Append(build_tb.GetSingleTuple(j));
                     }
                     std::vector<Vector> cols = tmp_tb.GetCols();
                     cols.insert(cols.end(), probe_tb_.GetCols().begin(), probe_tb_.GetCols().end());
                     rest_tuple_batch_.Init(cols, probe_tb_.size(), probe_tb_.GetSelVector());
-                    expr_.Evaluate(rest_tuple_batch_.GetCols(), rest_tuple_batch_.size(), expr_result_);
-                    // std::cout << "expr size: " << expr_result_.size() << " expr: " << expr_result_.Get(0).ReadInt() << " rtbs: " << rest_tuple_batch_.ValidSize() << "\n";
+                    if (expr_.IsValid()) {
+                        expr_.Evaluate(rest_tuple_batch_.GetCols(), rest_tuple_batch_.size(), expr_result_);
+                    } else {
+                        expr_result_ = Vector(VectorType::Flat, LogicalType::INT, rest_tuple_batch_.size());
+                        for (size_t k = 0; k < rest_tuple_batch_.size(); k++) {
+                            expr_result_.Set(k, int64_t(1));
+                        }
+                    }
                     for (rest_tuple_batch_idx_ = 0; rest_tuple_batch_idx_ < rest_tuple_batch_.size(); ++rest_tuple_batch_idx_) {
                         if (!rest_tuple_batch_.IsValid(rest_tuple_batch_idx_)) continue;
                         if (expr_result_.Get(rest_tuple_batch_idx_).ReadInt() != 0) {
@@ -72,7 +77,6 @@ public:
                     }
                 }
                 build_single_tuple_idx_ = 0;
-                // std::cout << build_tuple_idx_ << std::endl;
             }
             build_tuple_idx_ = 0;
         }
@@ -80,11 +84,11 @@ public:
     }
 
 private:
-    ExprVecExecutor expr_;
-    std::vector<TupleBatch> build_tuples_;
-    OutputSchema output_schema_;
     std::unique_ptr<VecExecutor> ch_;
     std::unique_ptr<VecExecutor> ch2_;
+    OutputSchema output_schema_;
+    ExprVecExecutor expr_;
+    std::vector<TupleBatch> build_tuples_;
 
     size_t build_tuple_idx_{0};
     size_t build_single_tuple_idx_{0};  
