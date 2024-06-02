@@ -2,19 +2,31 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <signal.h>
 
 #include "catalog/options.hpp"
 #include "common/logging.hpp"
 #include "instance/instance.hpp"
+#include "common/printstack.hpp"
+
+void handler(int sig) {
+  ::signal(sig, SIG_DFL); // exit normally
+  std::cout << wing::get_stack_trace() << std::endl;
+  ::raise(sig);
+}
 
 int main(int argc, char** argv) {
+  signal(SIGSEGV, &handler);
+  signal(SIGABRT, &handler);
   wing::WingOptions options;
   for (int i = 2; i < argc; i++) {
     // Use JIT.
     if (strcmp(argv[i], "--jit") == 0) {
-      options.enable_jit_exec = true;
+      options.exec_options.style = "jit";
     } else if (strcmp(argv[i], "--vec") == 0) {
-      options.enable_vec_exec = true;
+      options.exec_options.style = "vec";
+    } else if (strcmp(argv[i], "--volcano") == 0) {
+      options.exec_options.style = "volcano";
     }
     // Create a new empty DB.
     else if (strcmp(argv[i], "--new") == 0) {

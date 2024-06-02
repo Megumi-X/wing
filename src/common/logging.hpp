@@ -2,8 +2,11 @@
 
 #include <fmt/core.h>
 #include <fmt/format.h>
+#include <fmt/std.h>
 
 #include <cassert>
+
+#include "common/printstack.hpp"
 
 #define __LOG_ERR 3
 #define __LOG_WARNING 4
@@ -28,12 +31,12 @@
 
 #ifndef DB_NDEBUG
 #define DEFAULT_LOG_LEVEL __LOG_DEBUG
-#define DB_ASSERT(assertion)                                   \
-  ({                                                           \
-    if (!(assertion)) {                                        \
-      DB_ERR("Internal Error: Assertion failed: " #assertion); \
-      std::abort();                                            \
-    }                                                          \
+#define DB_ASSERT(assertion)                   \
+  ({                                           \
+    if (!(assertion)) {                        \
+      DB_ERR("Assertion failed: " #assertion); \
+      std::abort();                            \
+    }                                          \
   })
 #else
 #define DEFAULT_LOG_LEVEL __LOG_DEBUG

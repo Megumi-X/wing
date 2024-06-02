@@ -20,11 +20,23 @@ class PredicateElement {
   BitVector left_bits_;
   BitVector right_bits_;
 
-  /* Check if left_bits_ and v have some intersection. */
-  bool CheckLeft(const BitVector& v) const { return left_bits_.Check(v); }
+  /* Check if v contains left_bits_. */
+  bool CheckLeft(const BitVector& v) const { return left_bits_.ContainedIn(v); }
 
-  /* Check if right_bits_ and v have some intersection. */
-  bool CheckRight(const BitVector& v) const { return right_bits_.Check(v); }
+  /* Check if v contains right_bits_. */
+  bool CheckRight(const BitVector& v) const {
+    return right_bits_.ContainedIn(v);
+  }
+
+  /* Check if v has intersection with left_bits_. */
+  bool CheckLeftIntersection(const BitVector& v) const {
+    return left_bits_.HasIntersection(v);
+  }
+
+  /* Check if v has intersection with right_bits_. */
+  bool CheckRightIntersection(const BitVector& v) const {
+    return right_bits_.HasIntersection(v);
+  }
 
   /* Check if the operator is Eq. */
   bool IsEq() const { return expr_->op_ == OpType::EQ; }
@@ -47,11 +59,47 @@ class PredicateElement {
     return {};
   }
 
+  /* If the left expression only references one table. */
+  std::optional<std::string> GetLeftTableName() const {
+    auto ret = GetTableNameInExpr(expr_->ch0_.get());
+    return !ret || ret == "" ? std::optional<std::string>() : ret;
+  }
+
+  /* If the right expression only references one table. */
+  std::optional<std::string> GetRightTableName() const {
+    auto ret = GetTableNameInExpr(expr_->ch1_.get());
+    return !ret || ret == "" ? std::optional<std::string>() : ret;
+  }
+
   /* Return the type of left operand. */
   LogicalType GetLeftType() const { return expr_->ch0_->ret_type_; }
 
   /* Return the type of left operand. */
   LogicalType GetRightType() const { return expr_->ch1_->ret_type_; }
+
+  const std::unique_ptr<Expr>& GetLeftExpr() const { return expr_->ch0_; }
+
+  const std::unique_ptr<Expr>& GetRightExpr() const { return expr_->ch1_; }
+
+ private:
+  std::optional<std::string> GetTableNameInExpr(const Expr* expr) const {
+    if (!expr)
+      return "";
+    if (expr->type_ == ExprType::COLUMN) {
+      return static_cast<const ColumnExpr*>(expr)->table_name_;
+    }
+    if (expr->ch0_ && expr->ch1_) {
+      auto ret0 = GetTableNameInExpr(expr->ch0_.get());
+      auto ret1 = GetTableNameInExpr(expr->ch1_.get());
+      if (!ret0 || !ret1 || (ret0 != "" && ret1 != "" && ret0 != ret1)) {
+        return {};
+      } else {
+        return ret0;
+      }
+    } else {
+      return GetTableNameInExpr(expr->ch0_.get());
+    }
+  }
 };
 
 class PredicateVec {

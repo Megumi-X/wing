@@ -14,7 +14,7 @@
 
 static wing::WingOptions WingTestOptions() {
   wing::WingOptions ret;
-  ret.enable_vec_exec = true;
+  ret.exec_options.style = "vec";
   return ret;
 }
 

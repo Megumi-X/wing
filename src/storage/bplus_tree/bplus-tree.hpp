@@ -2,6 +2,8 @@
 
 #include <cassert>
 #include <filesystem>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <stack>
 

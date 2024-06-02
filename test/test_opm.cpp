@@ -4,6 +4,7 @@
 
 #include "catalog/stat.hpp"
 #include "common/stopwatch.hpp"
+#include "common/threadpool.hpp"
 #include "instance/instance.hpp"
 #include "test.hpp"
 #include "zipf.hpp"
@@ -170,6 +171,7 @@ TEST(OptimizerTest, JoinCommuteTest) {
   using namespace wing::wing_testing;
   std::filesystem::remove_all("__tmp0203");
   auto db = std::make_unique<wing::Instance>("__tmp0203", wing_test_options);
+  db->SetEnableCostBased(true);
   {
     EXPECT_TRUE(db->Execute("create table B(a int64 auto_increment primary "
                             "key, data varchar(2));")
@@ -323,6 +325,7 @@ TEST(OptimizerTest, JoinAssociate4Test) {
   using namespace wing::wing_testing;
   std::filesystem::remove_all("__tmp0204");
   auto db = std::make_unique<wing::Instance>("__tmp0204", wing_test_options);
+  db->SetEnableCostBased(true);
   // There is a cafe called Cats'eye which has some cat employees.
   // The cat dba only stores the id of the referenced information in table Cats.
   // Now she wants to print these information for each cat.
@@ -378,6 +381,7 @@ TEST(OptimizerTest, JoinAssociate5Test) {
   using namespace wing::wing_testing;
   std::filesystem::remove_all("__tmp0205");
   auto db = std::make_unique<wing::Instance>("__tmp0205", wing_test_options);
+  db->SetEnableCostBased(true);
   // There is a cafe called Cats'eye which has some cat employees.
   // The cat dba only stores the id of the referenced information in table Cats.
   // Now she wants to print these information for each cat.
@@ -704,4 +708,737 @@ TEST(OptimizerTest, FloatRangeScanTest) {
   }
   db = nullptr;
   std::filesystem::remove_all("__tmp0207");
+}
+
+class PredElement {
+ public:
+  std::string pred_str;
+  std::vector<std::string> tables;
+
+  PredElement(std::string _pred_str, std::vector<std::string> _tables)
+    : pred_str(_pred_str), tables(_tables) {}
+};
+
+std::vector<std::pair<std::vector<std::string>, double>> CalcTrueCard(
+    std::vector<std::string> tables, std::vector<PredElement> preds,
+    wing::Instance& db) {
+  DB_ASSERT(tables.size() < 20);
+  std::vector<std::pair<std::vector<std::string>, double>> true_card(
+      (1 << tables.size()));
+  std::vector<std::tuple<size_t, size_t, std::string>> not_calc;
+  wing::ThreadPool threads;
+  true_card[0] = {std::vector<std::string>(), 0};
+  db.SetEnableCostBased(true);
+  for (uint32_t S = 1; S < true_card.size(); S++) {
+    std::vector<std::string> table_subset;
+    std::string table_str;
+    std::string pred_str;
+    for (uint32_t j = 0; j < tables.size(); ++j) {
+      if ((S >> j) & 1) {
+        table_subset.push_back(tables[j]);
+        if (table_str.empty()) {
+          table_str = tables[j];
+        } else {
+          table_str += ", ";
+          table_str += tables[j];
+        }
+      }
+    }
+    true_card[S].first = table_subset;
+    // Check if the query graph is connected.
+    // If not, then we can find a connected component that is a subset of the
+    // current table set `i`.
+    std::vector<std::pair<int, uint32_t>> union_set(tables.size());
+    // top of the union set,
+    // use it to get the result.
+    uint32_t union_set_tp = 0;
+    for (uint32_t l = 0; l < tables.size(); l++)
+      if ((S >> l) & 1) {
+        union_set_tp = l;
+        union_set[l] = {l, 1 << l};
+      }
+    auto find = [&](int t) {
+      while (t != union_set[t].first) {
+        int ft = union_set[t].first;
+        union_set[ft].second |= union_set[t].second;
+        union_set[t].first = union_set[union_set[ft].first].first;
+        t = ft;
+      }
+      return t;
+    };
+    for (uint32_t j = 0; j < preds.size(); ++j) {
+      bool flag2 = true;
+      // enumerate all tables in the predicate
+      size_t table_set = 0;
+      for (uint32_t k = 0; k < preds[j].tables.size(); k++) {
+        bool flag = false;
+        // get the index of the table.
+        for (uint32_t l = 0; l < tables.size(); l++) {
+          if ((S >> l) & 1) {
+            if (tables[l] == preds[j].tables[k]) {
+              flag = true;
+              table_set |= 1 << l;
+              break;
+            }
+          }
+        }
+        if (!flag) {
+          flag2 = false;
+          break;
+        }
+      }
+      if (flag2) {
+        if (__builtin_popcountll(table_set) > 1) {
+          int x = -1;
+          for (uint32_t l = 0; l < tables.size(); l++) {
+            if ((table_set >> l) & 1) {
+              if (x != -1) {
+                int fx = find(x);
+                int fl = find(l);
+                union_set[fl].first = union_set[fx].first;
+                union_set[fx].second |= union_set[fl].second;
+              } else {
+                x = l;
+              }
+            }
+          }
+        }
+
+        if (pred_str.empty()) {
+          pred_str = "(";
+          pred_str += preds[j].pred_str;
+          pred_str += ")";
+        } else {
+          pred_str += " and (";
+          pred_str += preds[j].pred_str;
+          pred_str += ")";
+        }
+      }
+    }
+
+    std::string sql = fmt::format("select 1 from {} {} {};", table_str,
+        pred_str.empty() ? "" : "where", pred_str);
+    if (uint32_t subset = union_set[find(union_set_tp)].second; subset != S) {
+      not_calc.emplace_back(S, subset, sql);
+      continue;
+    }
+    DB_INFO("{}", sql);
+    threads.Push([&db, &true_card, S, sql]() {
+      auto ret = db.Execute(sql);
+      DB_ASSERT(ret.Valid());
+      true_card[S].second = 0;
+      while (ret.Next()) {
+        true_card[S].second += 1;
+      }
+      DB_INFO("{}: {}", sql, true_card[S].second);
+    });
+  }
+  threads.WaitForAllTasks();
+  for (auto& [S, subset, sql] : not_calc) {
+    true_card[S].second =
+        true_card[S ^ subset].second * true_card[subset].second;
+    std::string subset_table_str;
+    for (uint32_t l = 0; l < tables.size(); l++)
+      if ((subset >> l) & 1) {
+        subset_table_str += tables[l] + ", ";
+      }
+    DB_INFO(
+        "subset {{ {} }}, {}: {}", subset_table_str, sql, true_card[S].second);
+  }
+  return true_card;
+}
+
+void PrintTrueCard(
+    const std::vector<std::pair<std::vector<std::string>, double>>& true_cards,
+    const std::string& file_name) {
+  if (file_name == "")
+    return;
+  std::ofstream out(file_name, std::ios::binary);
+  out << true_cards.size() << std::endl;
+  for (auto& [tables, size] : true_cards) {
+    out << tables.size() << " ";
+    for (auto& a : tables) {
+      out << a << " ";
+    }
+    out << ": " << std::setprecision(20) << size << "\n";
+  }
+  out << std::endl;
+}
+
+std::optional<std::vector<std::pair<std::vector<std::string>, double>>>
+ReadTrueCard(const std::string& file_name) {
+  if (file_name == "")
+    return {};
+  std::ifstream in(file_name, std::ios::binary);
+  if (!in || in.eof()) {
+    return {};
+  }
+  size_t num = 0;
+  if (!(in >> num) || !num) {
+    return {};
+  }
+  std::vector<std::pair<std::vector<std::string>, double>> data;
+  for (size_t i = 0; i < num; i++) {
+    std::vector<std::string> tables;
+    double size;
+    size_t table_num = 0;
+    if (!(in >> table_num)) {
+      return {};
+    }
+    for (size_t j = 0; j < table_num; j++) {
+      std::string name;
+      if (!(in >> name)) {
+        return {};
+      }
+      tables.push_back(name);
+    }
+    std::string colon, sql;
+    in >> colon;
+    if (colon != ":" || !(in >> size)) {
+      return {};
+    }
+    data.emplace_back(tables, size);
+  }
+  return data;
+}
+
+size_t GetResultSetSize(wing::ResultSet& res) {
+  size_t sz = 0;
+  while (res.Next()) {
+    sz += 1;
+  }
+  return sz;
+}
+
+TEST(EasyOptimizerTest, Join3Tables) {
+  using namespace wing;
+  using namespace wing::wing_testing;
+  std::filesystem::remove_all("__tmp0208");
+  auto db = std::make_unique<wing::Instance>("__tmp0208", wing_test_options);
+  EXPECT_TRUE(db->Execute("create table t1(id int64, idt3 int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t2(id int64, idt1 int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t3(id int64, idt2 int64);").Valid());
+  int N = 1000;
+  RandomTupleGen tuple_gen(0x202405281635);
+  tuple_gen.AddInt(1, 100).AddInt(1, 100);
+  auto [stmt_t1, data_t1] = tuple_gen.GenerateValuesClause(N);
+  ASSERT_TRUE(db->Execute("insert into t1 " + stmt_t1 + ";").Valid());
+  auto [stmt_t2, data_t2] = tuple_gen.GenerateValuesClause(N);
+  ASSERT_TRUE(db->Execute("insert into t2 " + stmt_t2 + ";").Valid());
+  auto [stmt_t3, data_t3] = tuple_gen.GenerateValuesClause(N);
+  ASSERT_TRUE(db->Execute("insert into t3 " + stmt_t3 + ";").Valid());
+  auto true_card = CalcTrueCard({"t1", "t2", "t3"},
+      {PredElement("t1.id = t2.idt1", {"t1", "t2"}),
+          PredElement("t2.id = t3.idt2", {"t2", "t3"}),
+          PredElement("t3.id = t1.idt3", {"t1", "t3"})},
+      *db);
+  db->SetDebugPrintPlan(true);
+  db->SetEnableCostBased(true);
+  db->SetTrueCardinalityHints(true_card);
+  auto ret = db->Execute(
+      "select 1 from t1, t2, t3 where t1.id = t2.idt1 and t2.id = t3.idt2 and "
+      "t3.id = t1.idt3;");
+  ASSERT_TRUE(ret.Valid());
+  DB_INFO("{}, {}", ret.GetTotalOutputSize(), ret.GetPlan()->cost_);
+  // standard answer: join(join (t1, t3), t2)
+  ASSERT_EQ(ret.GetTotalOutputSize(), 14784);  // 1000+1000+1000+9898+943+943
+  ASSERT_EQ(ret.GetPlan()->cost_,
+      142.821);  // 3000*0.001+9898*0.001+(1000+1000)*0.01+(1000+9898)*0.01+943*0.001
+  ASSERT_EQ(true_card.back().second, GetResultSetSize(ret));
+  db = nullptr;
+  std::filesystem::remove_all("__tmp0208");
+}
+
+TEST(EasyOptimizerTest, Join5TablesCrossProduct) {
+  using namespace wing;
+  using namespace wing::wing_testing;
+  std::filesystem::remove_all("__tmp0209");
+  auto db = std::make_unique<wing::Instance>("__tmp0209", wing_test_options);
+  EXPECT_TRUE(db->Execute("create table t1(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t2(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t3(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t4(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t5(id int64);").Valid());
+  RandomTupleGen tuple_gen(0x202405281635);
+  tuple_gen.AddInt(1, 100);
+  auto [stmt_t1, data_t1] = tuple_gen.GenerateValuesClause(50);
+  ASSERT_TRUE(db->Execute("insert into t1 " + stmt_t1 + ";").Valid());
+  auto [stmt_t2, data_t2] = tuple_gen.GenerateValuesClause(10);
+  ASSERT_TRUE(db->Execute("insert into t2 " + stmt_t2 + ";").Valid());
+  auto [stmt_t3, data_t3] = tuple_gen.GenerateValuesClause(40);
+  ASSERT_TRUE(db->Execute("insert into t3 " + stmt_t3 + ";").Valid());
+  auto [stmt_t4, data_t4] = tuple_gen.GenerateValuesClause(20);
+  ASSERT_TRUE(db->Execute("insert into t4 " + stmt_t4 + ";").Valid());
+  auto [stmt_t5, data_t5] = tuple_gen.GenerateValuesClause(30);
+  ASSERT_TRUE(db->Execute("insert into t5 " + stmt_t5 + ";").Valid());
+  auto true_card = CalcTrueCard({"t1", "t2", "t3", "t4", "t5"}, {}, *db);
+  db->SetDebugPrintPlan(true);
+  db->SetEnableCostBased(true);
+  db->SetTrueCardinalityHints(true_card);
+  ResultSet ret;
+  StopWatch sw;
+  TestTimeout([&]() { ret = db->Execute("select 1 from t1, t2, t3, t4, t5;"); },
+      10000, "your join is too slow!");
+  DB_INFO("Used time: {}s", sw.GetTimeInSeconds());
+  ASSERT_TRUE(ret.Valid());
+  DB_INFO("{}, {}", ret.GetTotalOutputSize(), ret.GetPlan()->cost_);
+  // standard answer: join(join(join(t2, t4), t5), join(t1, t3))
+  ASSERT_EQ(ret.GetTotalOutputSize(),
+      24008350);  // 12000000 * 2 + 2000 + 6000 + 200 + 10 + 20 + 30 + 40 + 50
+  ASSERT_EQ(ret.GetPlan()->cost_, 12008.35);  // 12008350 * 0.001 (no hash join)
+  ASSERT_EQ(true_card.back().second, GetResultSetSize(ret));
+  db = nullptr;
+  std::filesystem::remove_all("__tmp0209");
+}
+
+TEST(EasyOptimizerTest, Join2Tables) {
+  using namespace wing;
+  using namespace wing::wing_testing;
+  std::filesystem::remove_all("__tmp0213");
+  auto db = std::make_unique<wing::Instance>("__tmp0213", wing_test_options);
+  EXPECT_TRUE(db->Execute("create table t1(id int64, idt3 int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t2(id int64, idt1 int64);").Valid());
+  int N = 1000;
+  RandomTupleGen tuple_gen(0x202405302330);
+  tuple_gen.AddInt(1, 1).AddInt(1, 100);
+  RandomTupleGen tuple_gen2(0x202405302338);
+  tuple_gen2.AddInt(1, 100).AddInt(1, 1);
+  auto [stmt_t1, data_t1] = tuple_gen.GenerateValuesClause(N);
+  ASSERT_TRUE(db->Execute("insert into t1 " + stmt_t1 + ";").Valid());
+  auto [stmt_t2, data_t2] = tuple_gen2.GenerateValuesClause(N);
+  ASSERT_TRUE(db->Execute("insert into t2 " + stmt_t2 + ";").Valid());
+  auto true_card = CalcTrueCard(
+      {"t1", "t2"}, {PredElement("t1.id = t2.idt1", {"t1", "t2"})}, *db);
+  db->SetDebugPrintPlan(true);
+  db->SetEnableCostBased(true);
+  db->SetTrueCardinalityHints(true_card);
+  auto ret = db->Execute("select 1 from t1, t2 where t1.id = t2.idt1;");
+  ASSERT_TRUE(ret.Valid());
+  DB_INFO("{}, {}", ret.GetTotalOutputSize(), ret.GetPlan()->cost_);
+  // standard answer: nested loop join(t1, t2)
+  // hash join cost: (1000 + 1000) * 0.01 + 1e6 * 0.001 = 1020
+  // nested loop join cost: 1e6 * 0.001 = 1000
+  // plus sequential scan cost (1000 + 1000) * 0.001 = 2.
+  ASSERT_EQ(ret.GetTotalOutputSize(), 2002000);
+  ASSERT_EQ(ret.GetPlan()->cost_, 1002);
+  ASSERT_EQ(true_card.back().second, GetResultSetSize(ret));
+  db = nullptr;
+  std::filesystem::remove_all("__tmp0213");
+}
+
+wing::ResultSet ExecuteSimpleSQLWithTrueCard(
+    const std::vector<PredElement>& preds,
+    const std::vector<std::string>& tables, const std::string& cache_name,
+    wing::Instance& db) {
+  std::string pred_str;
+  for (auto& pred : preds) {
+    if (!pred_str.empty()) {
+      pred_str += " and ";
+    }
+    pred_str += pred.pred_str;
+  }
+  std::string table_str;
+  for (auto& table : tables) {
+    if (!table_str.empty()) {
+      table_str += ", ";
+    }
+    table_str += table;
+  }
+  auto cached_true_card = ReadTrueCard(cache_name);
+  auto true_card = cached_true_card ? cached_true_card.value()
+                                    : CalcTrueCard(tables, preds, db);
+  if (!cached_true_card)
+    PrintTrueCard(true_card, cache_name);
+  db.SetTrueCardinalityHints(true_card);
+  db.SetDebugPrintPlan(true);
+  db.SetEnableCostBased(true);
+  wing::ResultSet result;
+  wing::StopWatch sw;
+  wing::wing_testing::TestTimeout(
+      [&]() {
+        result = db.Execute(
+            fmt::format("select 1 from {} where {};", table_str, pred_str));
+      },
+      7000, "your join and optimizer is too slow!! ");
+  DB_INFO("Used time: {}s", sw.GetTimeInSeconds());
+  {
+    auto tables1 = tables;
+    auto true_size = -1e200;
+    std::sort(tables1.begin(), tables1.end());
+    for (auto& [tables2, size] : true_card) {
+      std::sort(tables2.begin(), tables2.end());
+      if (tables2 == tables1) {
+        true_size = size;
+        break;
+      }
+    }
+    auto result_size = GetResultSetSize(result);
+    DB_ASSERT(true_size == result_size);
+  }
+  return result;
+}
+
+TEST(EasyOptimizerTest, Join11Tables) {
+  using namespace wing;
+  using namespace wing::wing_testing;
+  std::filesystem::remove_all("__tmp0210");
+  auto db = std::make_unique<wing::Instance>("__tmp0210", wing_test_options);
+  EXPECT_TRUE(db->Execute("create table t1(id12 int64);").Valid());
+  EXPECT_TRUE(
+      db->Execute("create table t2(id12 int64, id23 int64, id27 int64);")
+          .Valid());
+  EXPECT_TRUE(db->Execute("create table t3(id23 int64, id3X int64);").Valid());
+  EXPECT_TRUE(
+      db->Execute("create table t4(id48 int64, id45 int64, id4X1 int64);")
+          .Valid());
+  EXPECT_TRUE(
+      db->Execute("create table t5(id59 int64, id56 int64, id45 int64);")
+          .Valid());
+  EXPECT_TRUE(
+      db->Execute("create table t6(id56 int64, id68 int64, id67 int64);")
+          .Valid());
+  EXPECT_TRUE(
+      db->Execute("create table t7(id67 int64, id27 int64, id79 int64);")
+          .Valid());
+  EXPECT_TRUE(db->Execute("create table t8(id48 int64, id68 int64);").Valid());
+  EXPECT_TRUE(
+      db->Execute("create table t9(id59 int64, id79 int64, id9X int64);")
+          .Valid());
+  EXPECT_TRUE(db->Execute("create table t10(id9X int64, id3X int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t11(id4X1 int64);").Valid());
+
+  std::vector<size_t> sizes = {
+      50, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100};
+  std::vector<size_t> col_num = {1, 3, 2, 3, 3, 3, 3, 2, 3, 2, 1};
+  std::vector<std::string> tablename = {
+      "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11"};
+  for (uint32_t i = 0; i < tablename.size(); i++) {
+    RandomTupleGen tuple_gen(0x20240529145900 + i);
+    for (uint32_t j = 0; j < col_num[i]; j++) {
+      tuple_gen.AddInt(1, 20);
+    }
+    auto [stmt, data] = tuple_gen.GenerateValuesClause(sizes[i]);
+    ASSERT_TRUE(
+        db->Execute("insert into " + tablename[i] + " " + stmt + ";").Valid());
+  }
+
+  // test 1 all join
+  {
+    auto preds = std::vector<PredElement>{
+        PredElement("t5.id59 = t9.id59", {"t5", "t9"}),
+        PredElement("t7.id79 = t9.id79", {"t7", "t9"}),
+        PredElement("t10.id9X = t9.id9X", {"t10", "t9"}),
+        PredElement("t5.id45 = t4.id45", {"t4", "t5"}),
+        PredElement("t5.id56 = t6.id56", {"t5", "t6"}),
+        PredElement("t6.id68 = t8.id68", {"t6", "t8"}),
+        PredElement("t6.id67 = t7.id67", {"t6", "t7"}),
+        PredElement("t4.id48 = t8.id48", {"t4", "t8"}),
+        PredElement("t2.id27 = t7.id27", {"t2", "t7"}),
+        PredElement("t2.id12 = t1.id12", {"t1", "t2"}),
+        PredElement("t2.id23 = t3.id23", {"t2", "t3"}),
+        PredElement("t3.id3X = t10.id3X", {"t3", "t10"}),
+        PredElement("t4.id4X1 = t11.id4X1", {"t4", "t11"}),
+    };
+    auto ret = ExecuteSimpleSQLWithTrueCard(preds,
+        {"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11"},
+        "test/true_card_hints/join11tables_cache.txt", *db);
+    ASSERT_TRUE(ret.Valid());
+    DB_INFO("{}, {}", ret.GetTotalOutputSize(), ret.GetPlan()->cost_);
+    ASSERT_EQ(ret.GetTotalOutputSize(), 136368);
+    ASSERT_TRUE(fabs(ret.GetPlan()->cost_ - 231.69) < 1e-9);
+  }
+  // test 2 join a chain {t11, t4, t8, t6, t7, t2, t3, t10}
+  {
+    auto preds = std::vector<PredElement>{
+        PredElement("t3.id3X = t10.id3X", {"t3", "t10"}),
+        PredElement("t4.id4X1 = t11.id4X1", {"t4", "t11"}),
+        PredElement("t4.id48 = t8.id48", {"t4", "t8"}),
+        PredElement("t2.id27 = t7.id27", {"t2", "t7"}),
+        PredElement("t6.id68 = t8.id68", {"t6", "t8"}),
+        PredElement("t6.id67 = t7.id67", {"t6", "t7"}),
+        PredElement("t2.id23 = t3.id23", {"t2", "t3"}),
+    };
+    auto ret = ExecuteSimpleSQLWithTrueCard(preds,
+        {"t2", "t3", "t4", "t6", "t7", "t8", "t10", "t11"},
+        "test/true_card_hints/join11tables_cache.txt", *db);
+    ASSERT_TRUE(ret.Valid());
+    DB_INFO("{}, {}", ret.GetTotalOutputSize(), ret.GetPlan()->cost_);
+    ASSERT_EQ(ret.GetTotalOutputSize(), 15128676);
+    ASSERT_TRUE(fabs(ret.GetPlan()->cost_ - 7854.474) < 1e-9);
+  }
+  // test 3 join a cycle {}
+  {
+    auto preds = std::vector<PredElement>{
+        PredElement("t3.id3X = t10.id3X", {"t3", "t10"}),
+        PredElement("t2.id23 = t3.id23", {"t2", "t3"}),
+        PredElement("t2.id27 = t7.id27", {"t2", "t7"}),
+        PredElement("t6.id67 = t7.id67", {"t6", "t7"}),
+        PredElement("t5.id56 = t6.id56", {"t5", "t6"}),
+        PredElement("t5.id59 = t9.id59", {"t5", "t9"}),
+        PredElement("t7.id79 = t9.id79", {"t7", "t9"}),
+        PredElement("t10.id9X = t9.id9X", {"t10", "t9"}),
+    };
+    auto ret = ExecuteSimpleSQLWithTrueCard(preds,
+        {"t5", "t6", "t7", "t2", "t3", "t10", "t9"},
+        "test/true_card_hints/join11tables_cache.txt", *db);
+    ASSERT_TRUE(ret.Valid());
+    DB_INFO("{}, {}", ret.GetTotalOutputSize(), ret.GetPlan()->cost_);
+    ASSERT_EQ(ret.GetTotalOutputSize(), 12863);
+    ASSERT_TRUE(fabs(ret.GetPlan()->cost_ - 61.966) < 1e-9);
+  }
+  db = nullptr;
+  std::filesystem::remove_all("__tmp0210");
+}
+
+TEST(EasyOptimizerTest, Join15TableCluster) {
+  using namespace wing;
+  using namespace wing::wing_testing;
+  std::filesystem::remove_all("__tmp0212");
+  auto db = std::make_unique<wing::Instance>("__tmp0212", wing_test_options);
+  EXPECT_TRUE(db->Execute("create table t1(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t2(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t3(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t4(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t5(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t6(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t7(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t8(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t9(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t10(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t11(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t12(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t13(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t14(id int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t15(id int64);").Valid());
+  std::vector<size_t> sizes = {100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+      100, 100, 100, 100, 100};
+  std::vector<size_t> col_num = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+  std::vector<std::string> tablename = {"t1", "t2", "t3", "t4", "t5", "t6",
+      "t7", "t8", "t9", "t10", "t11", "t12", "t13", "t14", "t15"};
+  for (uint32_t i = 0; i < tablename.size(); i++) {
+    RandomTupleGen tuple_gen(0x202405302159 + i);
+    for (uint32_t j = 0; j < col_num[i]; j++) {
+      tuple_gen.AddInt(1, 50);
+    }
+    auto [stmt, data] = tuple_gen.GenerateValuesClause(sizes[i]);
+    ASSERT_TRUE(
+        db->Execute("insert into " + tablename[i] + " " + stmt + ";").Valid());
+  }
+  // test 1 cluster
+  {
+    auto preds = std::vector<PredElement>();
+    for (auto L : tablename)
+      for (auto R : tablename)
+        if (L < R) {
+          preds.emplace_back(fmt::format("{}.id = {}.id", L, R),
+              std::vector<std::string>{L, R});
+        }
+    auto ret = ExecuteSimpleSQLWithTrueCard(preds,
+        {"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11",
+            "t12", "t13", "t14", "t15"},
+        "test/true_card_hints/join15tablecluster_cache.txt", *db);
+    ASSERT_TRUE(ret.Valid());
+    DB_INFO("{}, {}", ret.GetTotalOutputSize(), ret.GetPlan()->cost_);
+    ASSERT_EQ(ret.GetTotalOutputSize(), 1594912);
+    ASSERT_TRUE(fabs(ret.GetPlan()->cost_ - 902.96) < 1e-9);
+  }
+  db = nullptr;
+  std::filesystem::remove_all("__tmp0212");
+}
+
+TEST(OptimizerTest, PredTransTable2Small) {
+  using namespace wing;
+  using namespace wing::wing_testing;
+  std::filesystem::remove_all("__tmp0216");
+  auto db = std::make_unique<wing::Instance>("__tmp0216", wing_test_options);
+  db->SetEnablePredTrans(true);
+  EXPECT_TRUE(db->Execute("create table t1(id int64, idt2 int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t2(id int64, idt1 int64);").Valid());
+  {
+    ASSERT_TRUE(db->Execute("insert into t1 values(3, 10), (4, 11);").Valid());
+    ASSERT_TRUE(db->Execute("insert into t2 values(1, 2), (2, 3);").Valid());
+    // join result is (3, 10) (t1) - (2, 3) (t2)
+    auto result = db->Execute("select 1 from t1, t2 where t1.id = t2.idt1;");
+    DB_INFO("{}", result.GetTotalOutputSize());
+    ASSERT_EQ(result.GetTotalOutputSize(), 1 + 1 + 1 * 2);
+    ASSERT_TRUE(db->Execute("delete from t1;").Valid());
+    ASSERT_TRUE(db->Execute("delete from t2;").Valid());
+    ASSERT_EQ(db->Execute("select 1 from t1, t2;").GetTotalOutputSize(), 0);
+  }
+
+  {
+    ASSERT_TRUE(
+        db->Execute("insert into t1 values(3, 10), (4, 11), (5, 13);").Valid());
+    ASSERT_TRUE(
+        db->Execute("insert into t2 values(13, 2), (12, 3), (11, 4);").Valid());
+    // join result is (4, 11) (t1) - (11, 4) (t2)
+    auto result = db->Execute(
+        "select 1 from t1, t2 where t1.id = t2.idt1 and t2.id = t1.idt2;");
+    DB_INFO("{}", result.GetTotalOutputSize());
+    ASSERT_EQ(result.GetTotalOutputSize(), 1 + 1 + 1 * 2);
+    ASSERT_TRUE(db->Execute("delete from t1;").Valid());
+    ASSERT_TRUE(db->Execute("delete from t2;").Valid());
+    ASSERT_EQ(db->Execute("select 1 from t1, t2;").GetTotalOutputSize(), 0);
+  }
+  db = nullptr;
+  std::filesystem::remove_all("__tmp0216");
+}
+
+TEST(OptimizerTest, PredTransTable2Big) {
+  using namespace wing;
+  using namespace wing::wing_testing;
+  std::filesystem::remove_all("__tmp0214");
+  auto db = std::make_unique<wing::Instance>("__tmp0214", wing_test_options);
+  db->SetEnablePredTrans(true);
+  EXPECT_TRUE(db->Execute("create table t1(id int64, idt2 int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t2(id int64, idt1 int64);").Valid());
+  int N = 3000;
+  {
+    // used tuples in joining two tables.
+    RandomTupleGen tuple_gen(0x20240531215500);
+    tuple_gen.AddInt(1, 1).AddInt(1, 100);
+    auto [stmt_t1, data_t1] = tuple_gen.GenerateValuesClause(N / 2);
+    ASSERT_TRUE(db->Execute("insert into t1 " + stmt_t1 + ";").Valid());
+  }
+
+  {
+    // dangling tuples in joining two tables.
+    RandomTupleGen tuple_gen(0x20240531215501);
+    tuple_gen.AddInt(11, 100).AddInt(1, 100);
+    auto [stmt_t1, data_t1] = tuple_gen.GenerateValuesClause(N / 2);
+    ASSERT_TRUE(db->Execute("insert into t1 " + stmt_t1 + ";").Valid());
+  }
+
+  {
+    // used tuples in joining two tables.
+    RandomTupleGen tuple_gen2(0x20240531215502);
+    tuple_gen2.AddInt(1, 100).AddInt(1, 1);
+    auto [stmt_t2, data_t2] = tuple_gen2.GenerateValuesClause(N / 2);
+    ASSERT_TRUE(db->Execute("insert into t2 " + stmt_t2 + ";").Valid());
+  }
+
+  {
+    // dangling tuples in joining two tables.
+    RandomTupleGen tuple_gen2(0x20240531215503);
+    tuple_gen2.AddInt(1, 100).AddInt(2, 10);
+    auto [stmt_t2, data_t2] = tuple_gen2.GenerateValuesClause(N / 2);
+    ASSERT_TRUE(db->Execute("insert into t2 " + stmt_t2 + ";").Valid());
+  }
+
+  auto result = db->Execute("select 1 from t1, t2 where t1.id = t2.idt1;");
+  ASSERT_TRUE(result.Valid());
+  DB_INFO("{}", result.GetTotalOutputSize());
+  ASSERT_EQ(result.GetTotalOutputSize(), (N / 2) * (N / 2) * 2 + (N / 2) * 2);
+
+  db = nullptr;
+  std::filesystem::remove_all("__tmp0214");
+}
+
+TEST(OptimizerTest, PredTransTable3Small) {
+  using namespace wing;
+  using namespace wing::wing_testing;
+  std::filesystem::remove_all("__tmp0215");
+  auto db = std::make_unique<wing::Instance>("__tmp0215", wing_test_options);
+  db->SetEnablePredTrans(true);
+  EXPECT_TRUE(
+      db->Execute("create table t1(a int64, b int64, c int64);").Valid());
+  EXPECT_TRUE(
+      db->Execute("create table t2(b int64, c int64, d int64);").Valid());
+  EXPECT_TRUE(
+      db->Execute("create table t3(c int64, d int64, e int64);").Valid());
+  // output is (x, x, 5, x, x) where x = 1, 2, 3, 4.
+  ASSERT_TRUE(
+      db->Execute("insert into t1 values(1, 1, 5), (2, 2, 5), (3, 3, 5), (4, "
+                  "4, 5), (114514, 5, 5), (114515, 6, 5), (114516, 8, 5);")
+          .Valid());
+  ASSERT_TRUE(db->Execute("insert into t2 values(1, 5, 1), (2, 5, 2), (3, 5, "
+                          "3), (4, 5, 4), (6, 5, 6), (7, 5, 7);")
+                  .Valid());
+  ASSERT_TRUE(db->Execute("insert into t3 values(5, 1, 1), (5, 2, 2), (5, 3, "
+                          "3), (5, 4, 4), (5, 5, 114514), (8, 5, 114515);")
+                  .Valid());
+  auto result = db->Execute(
+      "select 1 from t1, t2, t3 where t1.b = t2.b and t1.c = t2.c and t2.c = "
+      "t3.c and t2.d = t3.d;");
+  ASSERT_TRUE(result.Valid());
+  DB_INFO("{}", result.GetTotalOutputSize());
+  ASSERT_EQ(result.GetTotalOutputSize(), 24);
+
+  db = nullptr;
+  std::filesystem::remove_all("__tmp0215");
+}
+
+TEST(OptimizerTest, PredTransTable3Big) {
+  using namespace wing;
+  using namespace wing::wing_testing;
+  std::filesystem::remove_all("__tmp0217");
+  auto db = std::make_unique<wing::Instance>("__tmp0217", wing_test_options);
+  db->SetEnablePredTrans(true);
+  EXPECT_TRUE(db->Execute("create table t1(a int64, b int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t2(a int64, c int64);").Valid());
+  EXPECT_TRUE(db->Execute("create table t3(b int64, d int64);").Valid());
+  int N = 3000;
+
+  // t1
+  RandomTupleGen tuple_gen1(0x20240601004200);
+  tuple_gen1.AddInt(1, 10000).AddInt(1, 10000);
+  auto [stmt_t1, data_t1] = tuple_gen1.GenerateValuesClause(N);
+  ASSERT_TRUE(db->Execute("insert into t1 " + stmt_t1 + ";").Valid());
+
+  // t2
+  RandomTupleGen tuple_gen2(0x20240601004201);
+  tuple_gen2.AddInt(1, 10000).AddInt(1, 10000);
+  auto [stmt_t2, data_t2] = tuple_gen2.GenerateValuesClause(N);
+  ASSERT_TRUE(db->Execute("insert into t2 " + stmt_t2 + ";").Valid());
+
+  // t3
+  RandomTupleGen tuple_gen3(0x20240601004202);
+  tuple_gen3.AddInt(1, 10000).AddInt(1, 10000);
+  auto [stmt_t3, data_t3] = tuple_gen3.GenerateValuesClause(N);
+  ASSERT_TRUE(db->Execute("insert into t3 " + stmt_t3 + ";").Valid());
+
+  std::set<size_t> Aset, Bset;
+
+  size_t size_t123 = 0;
+  size_t size_t1 = 0, size_t12 = 0;
+  for (uint32_t i = 0; i < N; i++) {
+    bool flag_t1 = false;
+    for (uint32_t j = 0; j < N; j++)
+      if (data_t1.Get(i, 0).ReadInt() == data_t2.Get(j, 0).ReadInt()) {
+        bool flag = false;
+        for (uint32_t k = 0; k < N; k++)
+          if (data_t1.Get(i, 1).ReadInt() == data_t3.Get(k, 0).ReadInt()) {
+            size_t123 += 1;
+            if (!flag) {
+              size_t12 += 1;
+              Aset.insert(data_t1.Get(i, 0).ReadInt());
+              Bset.insert(data_t1.Get(i, 1).ReadInt());
+            }
+            flag = true;
+            flag_t1 = true;
+          }
+      }
+    if (flag_t1) {
+      size_t1 += 1;
+    }
+  }
+
+  size_t size_t2 = 0, size_t3 = 0;
+  for (uint32_t i = 0; i < N; i++) {
+    size_t2 += Aset.count(data_t2.Get(i, 0).ReadInt());
+    size_t3 += Bset.count(data_t3.Get(i, 0).ReadInt());
+  }
+  // DB_INFO("{}, {}, {}, {}", size_t123, size_t1, size_t2, size_t3);
+  DB_INFO("standard answer of total output: {}",
+      size_t123 * 2 + size_t12 + size_t1 + size_t2 + size_t3);
+
+  auto result = db->Execute(
+      "select 1 from (t1 join t2 on t1.a = t2.a) join t3 on t1.b = t3.b;");
+  ASSERT_TRUE(result.Valid());
+  DB_INFO("{}, {}", result.GetTotalOutputSize(), GetResultSetSize(result));
+  ASSERT_TRUE(result.GetTotalOutputSize() <=
+              size_t123 * 2 + size_t12 + size_t1 + size_t2 + size_t3 + 30);
+
+  db = nullptr;
+  std::filesystem::remove_all("__tmp0217");
 }

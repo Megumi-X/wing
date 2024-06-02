@@ -1,6 +1,7 @@
 #include <queue>
 
 #include "plan/optimizer.hpp"
+#include "plan/predicate_transfer/pt_graph.hpp"
 #include "rules/convert_to_hash_join.hpp"
 
 namespace wing {
@@ -79,31 +80,44 @@ bool CheckHasStat(const PlanNode* plan, const DB& db) {
  * For simplicity, we only use cost based optimizer when:
  * (1) The root plan node is Project, and there is only one Project.
  * (2) The other plan nodes can only be Join or SeqScan or RangeScan.
- * (3) The number of tables is <= 10.
- * (4) All tables have statistics.
+ * (3) The number of tables is <= 20.
+ * (4) All tables have statistics or true cardinality is provided.
  */
 bool CheckCondition(const PlanNode* plan, const DB& db) {
-  if (GetTableNum(plan) > 10)
+  if (GetTableNum(plan) > 20)
     return false;
   if (plan->type_ != PlanType::Project && plan->type_ != PlanType::Aggregate)
     return false;
   if (!CheckIsAllJoin(plan->ch_.get()))
     return false;
-  return CheckHasStat(plan->ch_.get(), db);
+  return db.GetOptions().optimizer_options.true_cardinality_hints ||
+         CheckHasStat(plan->ch_.get(), db);
 }
 
 std::unique_ptr<PlanNode> CostBasedOptimizer::Optimize(
     std::unique_ptr<PlanNode> plan, DB& db) {
-  if (CheckCondition(plan.get(), db)) {
-    std::vector<std::unique_ptr<OptRule>> R;
-    R.push_back(std::make_unique<ConvertToHashJoinRule>());
-    plan = Apply(std::move(plan), R, db);
+  if (CheckCondition(plan.get(), db) &&
+      db.GetOptions().optimizer_options.enable_cost_based) {
+    // std::vector<std::unique_ptr<OptRule>> R;
+    // R.push_back(std::make_unique<ConvertToHashJoinRule>());
+    // plan = Apply(std::move(plan), R, db);
     // TODO...
 
   } else {
     std::vector<std::unique_ptr<OptRule>> R;
     R.push_back(std::make_unique<ConvertToHashJoinRule>());
     plan = Apply(std::move(plan), R, db);
+  }
+  if (db.GetOptions().exec_options.enable_predicate_transfer) {
+    if (plan->type_ != PlanType::Insert && plan->type_ != PlanType::Delete &&
+        plan->type_ != PlanType::Update) {
+      auto pt_plan = std::make_unique<PredicateTransferPlanNode>();
+      pt_plan->graph_ = std::make_shared<PtGraph>(plan.get());
+      pt_plan->output_schema_ = plan->output_schema_;
+      pt_plan->table_bitset_ = plan->table_bitset_;
+      pt_plan->ch_ = std::move(plan);
+      plan = std::move(pt_plan);
+    }
   }
   return plan;
 }
