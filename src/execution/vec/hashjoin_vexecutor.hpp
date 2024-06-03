@@ -58,6 +58,7 @@ public:
             }
         }
         update_probe();
+        input_vec_.resize(build_tuples_[0].GetCols().size() + probe_tb_.GetCols().size());
     }
 
     TupleBatch InternalNext() {
@@ -65,31 +66,29 @@ public:
         ret.Init(output_schema_.GetTypes(), max_batch_size_);
         while (probe_tb_.size() > 0) {    
             for (; probe_tb_idx_ < probe_tb_.size(); ++probe_tb_idx_) {
-                size_t i = probe_tb_idx_;
+                const size_t& i = probe_tb_idx_;
                 if (hash_table_end_) {
                     it_ = hash_table_.find(right_hash_vals_[i]);
                     hash_table_end_ = false;
                 }
                 if (it_ != hash_table_.end()) {
                     for (; hash_table_idx_ < it_->second.size(); ++hash_table_idx_) {
-                        size_t build_tb_idx = it_->second[hash_table_idx_].first;
-                        size_t build_tuple_idx = it_->second[hash_table_idx_].second;
-                        TupleBatch& build_tb = build_tuples_[build_tb_idx];
-                        std::vector<Vector> input_vec(build_tb.GetCols().size() + probe_tb_.GetCols().size());
+                        const size_t& build_tb_idx = it_->second[hash_table_idx_].first;
+                        const size_t& build_tuple_idx = it_->second[hash_table_idx_].second;
+                        const TupleBatch& build_tb = build_tuples_[build_tb_idx];
                         for (size_t j = 0; j < build_tb.GetCols().size(); ++j) {
-                            input_vec[j] = build_tb.GetCols()[j].Slice(build_tuple_idx, 1);
+                            input_vec_[j] = build_tb.GetCols()[j].Slice(build_tuple_idx, 1);
                         }
                         for (size_t j = 0; j < probe_tb_.GetCols().size(); ++j) {
-                            input_vec[j + build_tb.GetCols().size()] = probe_tb_.GetCols()[j].Slice(i, 1);
+                            input_vec_[j + build_tb.GetCols().size()] = probe_tb_.GetCols()[j].Slice(i, 1);
                         }
-                        expr_result_ = Vector(VectorType::Flat, LogicalType::INT, 1);
                         if (expr_.IsValid()) {
-                            expr_.Evaluate(input_vec, 1, expr_result_);
+                            expr_.Evaluate(input_vec_, 1, expr_result_);
                         } else {
                             expr_result_.Set(0, int64_t(1));
                         }
                         if (expr_result_.Get(0).ReadInt() != 0) {
-                            ret.Append(input_vec, 0);
+                            ret.Append(input_vec_, 0);
                             if (ret.size() == max_batch_size_) {
                                 ++hash_table_idx_;
                                 return ret;
@@ -144,7 +143,7 @@ private:
     std::vector<TupleBatch> build_tuples_;
     std::unordered_map<size_t, std::vector<std::pair<size_t, size_t>>> hash_table_;
  
-    Vector expr_result_;
+    Vector expr_result_ = Vector(VectorType::Flat, LogicalType::INT, 1);
     TupleBatch probe_tb_;
     size_t probe_tb_idx_{0};
     size_t hash_table_idx_{0};
@@ -154,6 +153,8 @@ private:
     std::vector<Vector> right_hash_cols_;
     std::vector<size_t> right_hash_vals_;
     size_t right_hash_cols_idx_{0};
+
+    std::vector<Vector> input_vec_;
 };
 
 }
