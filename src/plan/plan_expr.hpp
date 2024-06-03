@@ -231,13 +231,13 @@ class PredicateVec {
       a.right_bits_ = std::move(right_bits);
     }
   }
-
- private:
   static std::unique_ptr<BinaryConditionExpr> _trans(std::unique_ptr<Expr> e) {
     auto ret = static_cast<BinaryConditionExpr*>(e.get());
     e.release();
     return std::unique_ptr<BinaryConditionExpr>(ret);
   }
+  
+  private:
   std::vector<PredicateElement> vec_;
 };
 

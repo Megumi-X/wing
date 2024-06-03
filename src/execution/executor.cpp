@@ -56,16 +56,16 @@ std::unique_ptr<VecExecutor> ExecutorGenerator::GenerateVec(
     auto join_plan = static_cast<const JoinPlanNode*>(plan);
     return std::make_unique<JoinVecExecutor>(db.GetOptions().exec_options,
         join_plan->predicate_.GenExpr(), join_plan->output_schema_,
-        InternalGenerateVec(join_plan->ch_.get(), db, txn_id),
-        InternalGenerateVec(join_plan->ch2_.get(), db, txn_id));
+        GenerateVec(join_plan->ch_.get(), db, txn_id),
+        GenerateVec(join_plan->ch2_.get(), db, txn_id));
   }
 
   else if (plan->type_ == PlanType::HashJoin) {
     auto hashjoin_plan = static_cast<const HashJoinPlanNode*>(plan);
     return std::make_unique<HashJoinVecExecutor>(db.GetOptions().exec_options,
         hashjoin_plan->predicate_.GenExpr(), hashjoin_plan->output_schema_,
-        InternalGenerateVec(hashjoin_plan->ch_.get(), db, txn_id),
-        InternalGenerateVec(hashjoin_plan->ch2_.get(), db, txn_id),
+        GenerateVec(hashjoin_plan->ch_.get(), db, txn_id),
+        GenerateVec(hashjoin_plan->ch2_.get(), db, txn_id),
         hashjoin_plan->left_hash_exprs_, hashjoin_plan->right_hash_exprs_,
         plan->ch_->output_schema_, plan->ch2_->output_schema_);
   }

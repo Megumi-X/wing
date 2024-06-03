@@ -106,6 +106,11 @@ public:
         return ret;
     }
 
+    virtual size_t GetTotalOutputSize() const override {
+        return ch_->GetTotalOutputSize() + ch2_->GetTotalOutputSize() +
+                stat_output_size_;
+    }
+
 private:
     void update_probe() {
         probe_tb_ = ch2_->Next();

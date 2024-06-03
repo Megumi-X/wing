@@ -83,6 +83,11 @@ public:
         return ret;
     }
 
+    virtual size_t GetTotalOutputSize() const override {
+        return ch_->GetTotalOutputSize() + ch2_->GetTotalOutputSize() +
+                stat_output_size_;
+    }
+
 private:
     std::unique_ptr<VecExecutor> ch_;
     std::unique_ptr<VecExecutor> ch2_;
