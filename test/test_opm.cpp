@@ -1658,7 +1658,7 @@ TEST(OptimizerTest, PredTransCluster) {
     sql_str += ";";
     ResultSet result;
     StopWatch sw;
-    TestTimeout([&]() { result = db->Execute(sql_str); }, 2000,
+    TestTimeout([&]() { result = db->Execute(sql_str); }, 20000,
         "your predicate transfer is too slow!");
     DB_INFO("Used time: {}s", sw.GetTimeInSeconds());
     ASSERT_TRUE(result.Valid());

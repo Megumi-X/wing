@@ -38,6 +38,7 @@ public:
                     ret.Append(rest_tuple_batch_.GetSingleTuple(rest_tuple_batch_idx_));
                     ++ret_size;
                     if (ret_size == max_batch_size_) {
+                        rest_tuple_batch_idx_++;
                         return ret;
                     }
                 }

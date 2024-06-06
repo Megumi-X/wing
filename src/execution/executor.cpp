@@ -70,6 +70,13 @@ std::unique_ptr<VecExecutor> ExecutorGenerator::GenerateVec(
         plan->ch_->output_schema_, plan->ch2_->output_schema_);
   }
 
+  else if (plan->type_ == PlanType::PredTrans) {
+    auto predtrans_plan = static_cast<const PredicateTransferPlanNode*>(plan);
+    return std::make_unique<PtVecExecutor>(db.GetOptions().exec_options,
+        GenerateVec(predtrans_plan->ch_.get(), db, txn_id),
+        std::make_unique<PtReducer>(db, txn_id, db.GetOptions().exec_options.pt_bits_per_key_n, predtrans_plan->graph_));
+  }
+
   throw DBException("Unsupported plan node.");
 }
 

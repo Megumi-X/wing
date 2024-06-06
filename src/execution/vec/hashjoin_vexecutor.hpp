@@ -27,7 +27,7 @@ public:
             right_hash_exprs_.emplace_back(ExprVecExecutor::Create(ex.get(), right_output_schema));
         }
     }
-    void Init() noexcept {
+    void Init() override {
         ch_->Init();
         ch2_->Init();
         build_tuples_.clear();
@@ -58,10 +58,12 @@ public:
             }
         }
         update_probe();
-        input_vec_.resize(build_tuples_[0].GetCols().size() + probe_tb_.GetCols().size());
+        if (build_tuples_.size() > 0 && probe_tb_.size() > 0) {
+            input_vec_.resize(build_tuples_[0].GetCols().size() + probe_tb_.GetCols().size());
+        }
     }
 
-    TupleBatch InternalNext() {
+    TupleBatch InternalNext() override {
         TupleBatch ret;
         ret.Init(output_schema_.GetTypes(), max_batch_size_);
         while (probe_tb_.size() > 0) {    

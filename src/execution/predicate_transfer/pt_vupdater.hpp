@@ -9,7 +9,7 @@ class PtVecUpdater {
     : input_(std::move(input)), num_cols_(num_cols) {}
 
   void Execute(
-      const std::vector<std::string>& bloom_filter, BitVector& valid_bits);
+      const std::vector<std::string>& bloom_filter, BitVector& valid_bits, const std::vector<size_t>& bf_map);
 
  private:
   /* The input of updated table */

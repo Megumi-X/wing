@@ -16,13 +16,14 @@ class PtGraph {
     std::string to;
     std::unique_ptr<Expr> pred_from;
     std::unique_ptr<Expr> pred_to;
+    size_t id;
 
     Edge(const std::string& _from, const std::string& _to,
-        std::unique_ptr<Expr> _pred_from, std::unique_ptr<Expr> _pred_to)
+        std::unique_ptr<Expr> _pred_from, std::unique_ptr<Expr> _pred_to, size_t _id = 0)
       : from(_from),
         to(_to),
         pred_from(std::move(_pred_from)),
-        pred_to(std::move(_pred_to)) {}
+        pred_to(std::move(_pred_to)), id(_id) {}
   };
 
   const std::map<std::string, std::vector<Edge>>& Graph() const {
